@@ -1,0 +1,19 @@
+name: Test and build
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run test:integration
+        env:
+          PAN_TEST_SEKEY: '1'
+      - run: npm run build
+      - run: git diff --exit-code -- baidu-pan-excel-transfer.user.js

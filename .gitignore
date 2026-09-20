@@ -1,0 +1,14 @@
+node_modules/
+*.log
+*.out
+*.err
+.env
+.env.*
+*.xlsx
+!examples/import-template.xlsx
+probe-share.cjs
+public-share-*.js
+browser-*.png
+release*-*.png
+auth.json
+*-换链结果.xlsx

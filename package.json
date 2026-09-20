@@ -1,0 +1,16 @@
+{
+  "name": "baidu-pan-excel-transfer",
+  "version": "3.1.1",
+  "private": true,
+  "description": "百度网盘 Excel / 文本批量转存与换链助手",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test api.test.cjs core.test.cjs template.test.cjs",
+    "test:integration": "node check-source-regression.cjs",
+    "build": "node build.cjs",
+    "template": "node make-template.cjs"
+  }
+}
