@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
+<title id="title">安装转存助手脚本</title><desc id="desc">在项目 README 中点击“安装油猴脚本”。Tampermonkey 脚本安装页面。百度网盘 Excel 转存与换链助手。确认名称后安装；已有旧版时更新原脚本。安装 / 更新。完成标志：Tampermonkey 管理面板中出现此脚本并已启用</desc>
+<rect width="1120" height="620" rx="22" fill="#f1f5fb"/>
+<g font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif">
+<rect x="38" y="34" width="64" height="64" rx="18" fill="#155eaa"/>
+<text x="70" y="77" text-anchor="middle" fill="white" font-size="32" font-weight="700">3</text>
+<text x="125" y="65" fill="#18324f" font-size="30" font-weight="700">安装转存助手脚本</text>
+<text x="125" y="97" fill="#53657b" font-size="18">在项目 README 中点击“安装油猴脚本”</text>
+<text x="1056" y="53" text-anchor="end" fill="#62738a" font-size="15">界面示意 · 非实拍截图</text>
+<rect x="40" y="130" width="1040" height="354" rx="14" fill="white" stroke="#cedaea"/>
+<path d="M40 177H1080" stroke="#e1e8f2"/><circle cx="66" cy="154" r="5" fill="#f0a298"/><circle cx="85" cy="154" r="5" fill="#f1d18a"/><circle cx="104" cy="154" r="5" fill="#93c9a6"/>
+<text x="130" y="160" fill="#60738a" font-size="15">操作位置与按钮名称示意，以实际浏览器界面为准</text>
+<text x="76" y="224" fill="#173757" font-size="23" font-weight="700">Tampermonkey 脚本安装页面</text>
+<text x="76" y="271" fill="#435b75" font-size="21" font-weight="400">百度网盘 Excel 转存与换链助手</text>
+<text x="76" y="318" fill="#435b75" font-size="21" font-weight="400">确认名称后安装；已有旧版时更新原脚本</text>
+<rect x="76" y="370" width="560" height="66" rx="12" fill="#e7f2ff" stroke="#1768b3" stroke-width="3"/>
+<text x="356" y="413" text-anchor="middle" fill="#135797" font-size="26" font-weight="700">安装 / 更新</text>
+<path d="M744 403H666" stroke="#ea8242" stroke-width="4"/><path d="M680 391L666 403L680 415" fill="none" stroke="#ea8242" stroke-width="4"/>
+<text x="765" y="410" fill="#ba5a28" font-size="20">本步重点</text>
+<rect x="40" y="510" width="1040" height="70" rx="12" fill="#e4eee9"/>
+<text x="62" y="552" fill="#2c654c" font-size="20">完成标志：Tampermonkey 管理面板中出现此脚本并已启用</text>
+</g></svg>
