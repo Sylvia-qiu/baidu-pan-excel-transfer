@@ -1,8 +1,16 @@
 # 项目介绍
 
+## 展示名称
+
+百度网盘批量转存与换链助手｜Excel 导入 · 油猴脚本
+
+英文名称：Baidu Netdisk Batch Transfer & Share Link Generator
+
+仓库地址保持 `Sylvia-qiu/baidu-pan-excel-transfer`，便于沿用已有安装和更新入口。
+
 ## GitHub 仓库简介
 
-百度网盘 Excel / 文本批量转存与换链助手：自动建目录、生成 365 天分享、随机提取码、失败重试、结果导出。
+百度网盘批量转存与换链油猴脚本：Excel / 文本导入、每行独立目录、自动建文件夹、365 天分享、随机提取码、失败重试与 Excel 导出。Baidu Netdisk batch transfer & share links.
 
 ## 完整介绍
 
@@ -16,4 +24,14 @@
 
 ## 建议仓库标签
 
-baidu-netdisk, tampermonkey, userscript, excel, batch-transfer, javascript
+baidu-netdisk, baidupan, baidu-pan, tampermonkey, userscript, excel, batch-transfer, file-sharing, javascript
+
+## 仓库 About 设置
+
+在 GitHub 仓库首页右侧 About 的齿轮中，将上方“GitHub 仓库简介”填入 Description，按上面的列表添加 Topics。这里的文档内容不会自动同步到仓库 About 设置。
+
+Topics 的设置方法见 [GitHub 官方说明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/classifying-your-repository-with-topics)。
+
+## 内容维护约定
+
+新增功能时同步更新 README 的使用场景和操作手册；每次版本发布补充 CHANGELOG。标题和简介以实际功能为准，中文覆盖“百度网盘、批量转存、Excel、换链、油猴脚本”，英文使用 Baidu Netdisk、batch transfer、Tampermonkey 等对应名称。
