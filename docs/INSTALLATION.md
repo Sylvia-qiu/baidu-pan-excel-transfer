@@ -1,14 +1,19 @@
 # 安装图解：从零开始，一步一步来
 
-适用电脑端 Edge / Chrome。下方图片是**操作示意图，不是实拍截图**，用来标明入口、按钮和顺序；不同浏览器的实际布局可能不同。安装完无需启动本地服务，也不用安装 Node.js。
+适用电脑端 Edge / Chrome。下方使用真实页面截图：扩展菜单来自 Edge，源码页来自 GitHub；执行权限配图引用 Tampermonkey 官方文档。不同浏览器版本的布局可能不同。安装完无需启动本地服务，也不用安装 Node.js。
 
 ## 第 1 步：先安装 Tampermonkey（油猴）
 
 打开 [Tampermonkey 官网](https://www.tampermonkey.net/)，选择你正在使用的浏览器，再通过官网的下载入口进入对应扩展商店。点击“获取”或“添加至 Chrome”，按浏览器提示完成添加。
 
-![第1步：从官网进入扩展商店，安装 Tampermonkey](images/install-01-extension.svg)
 
-**完成标志：**浏览器扩展列表中能找到 Tampermonkey。图标未显示在工具栏时，可从浏览器的扩展菜单中找到它。
+**完成标志：**浏览器扩展列表中能找到 Tampermonkey（中文可能显示“篡改猴”）。点击地址栏右侧的拼图形“扩展”图标：
+
+![Edge 地址栏右侧的扩展按钮，实际截图裁剪](images/real-edge-extension-button.png)
+
+在展开的列表中找到“篡改猴”，点击名称或左侧图标打开它的菜单；右边的三个点是浏览器对该扩展的管理菜单。
+
+![Edge 扩展列表中的篡改猴，实际截图裁剪](images/real-edge-tampermonkey.png)
 
 ## 第 2 步：允许它运行用户脚本
 
@@ -19,7 +24,12 @@
 
 找到 Tampermonkey，进入“详情 / 管理扩展”。若有“允许用户脚本”（Allow User Scripts），将其开启。没有这个选项时，按 [Tampermonkey 官方权限指引](https://www.tampermonkey.net/faq.php?q=Q209)，在扩展管理页开启“开发者模式”。不同版本可能采用不同入口。
 
-![第2步：在扩展管理中开启用户脚本执行权限](images/install-02-permission.svg)
+
+下图为 Tampermonkey 官方文档中的实际 Chrome 设置界面（英文版），红框标出 Allow User Scripts 开关。
+
+![Tampermonkey 官方截图：允许用户脚本开关](https://www.tampermonkey.net/images/userscripts_toggle.png)
+
+图片来源：[Tampermonkey 官方权限说明](https://www.tampermonkey.net/faq.php?q=Q209)。Edge 的文字或布局可能不同。
 
 **完成标志：**Tampermonkey 已启用，并已完成上述执行权限设置。
 
@@ -29,7 +39,6 @@
 
 如果 Tampermonkey 弹出安装页，确认名称是“百度网盘 Excel 转存与换链助手”，点击“安装”。已装旧版时，优先更新原脚本。
 
-![第3步：在 Tampermonkey 安装页确认脚本名称并安装](images/install-03-script.svg)
 
 **完成标志：**Tampermonkey 的“管理面板”中出现此脚本，状态为启用。
 
@@ -44,7 +53,10 @@
 
 要复制的是整个 **`baidu-pan-excel-transfer.user.js`** 文件，不是 README，不是单独的 `app.js`，也不是浏览器地址栏中的网址。代码开头应能看到 `// ==UserScript==`；后面代码很多是正常的，里面包含 Excel 处理库。
 
-![从 GitHub 脚本文件点击 Raw，进入纯源码页面后全选复制](images/install-08-copy-source.svg)
+
+下面是本项目脚本文件的真实页面：**Raw 在代码区域右上方**，紧挨着复制和下载图标。点击图片可放大查看。
+
+![GitHub 实际源码页面，Raw 按钮位于代码区域右上方](images/real-github-source.png)
 
 **然后把源码放进 Tampermonkey：**
 
@@ -53,13 +65,11 @@
 3. 按 **Ctrl+S** 保存。如果是更新已安装的脚本，直接在管理面板打开原脚本的编辑页，全选替换并保存，避免启用两份相同脚本。
 4. 回到管理面板，确认脚本名称正确、已启用。
 
-![手动安装：复制完整源码，替换编辑器中的默认代码，保存](images/install-07-source.svg)
 
 ## 第 4 步：打开百度网盘，让助手出现
 
 打开 [百度网盘文件页](https://pan.baidu.com/disk/main)，登录自己的账号，再刷新页面。这里要打开的是**自己的网盘文件页**，不是别人发来的分享页，也不是 GitHub 页面。
 
-![第4步：在自己的网盘文件页找到助手面板](images/install-04-panel.svg)
 
 **完成标志：**页面右上角出现“百度网盘转存与换链助手”，能看到“Excel 导入”和“粘贴分享文本”。
 
@@ -69,7 +79,6 @@
 
 在助手的“Excel 导入”页点击 **“下载 Excel 模板”**。填写原始链接和转存路径，例如 `/资源/第一部剧`，每行可用不同目录。提取码放在原始链接或分享文案中。
 
-![第5步：下载模板，按照教学示例填写链接与保存目录](images/install-05-template.svg)
 
 模板第二行是教学示例，按序号栏的“教学示例（不处理）”标记跳过，**不是固定跳过第二行**。保留它就从下一行填写；删除它后，新的第二行正常处理。直接改写示例行时，也要把序号改成自己的编号。
 
@@ -79,7 +88,6 @@
 
 点击“选择文件”，导入刚保存的 Excel，核对清单中的任务和目标目录，勾选要处理的行，然后点击 **“开始处理选中项”**。选择文件本身不会开始转存。
 
-![第6步：检查任务清单后开始处理，完成后复制链接或导出](images/install-06-run.svg)
 
 完成后点击新链接即可复制，也可以“导出结果 Excel”。新“转存链接”是原始链接右侧的独立列；失败、待核验或未完成的行留空。原始链接、备注和附加文字列会保留。
 
