@@ -6,6 +6,12 @@
 
 [安装油猴脚本](https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js) · [下载 Excel 模板](examples/import-template.xlsx) · [查看操作手册](docs/USER_GUIDE.md) · [反馈问题 / 功能建议](https://github.com/Sylvia-qiu/baidu-pan-excel-transfer/issues)
 
+## 为什么做这个项目
+
+这个工具最初是为了解决我自己的实际需求：按 Excel 中的不同目录批量转存百度网盘内容，再生成自己的分享链接并导出结果。试用了一些现有的开源项目后，发现还不能完全满足这套流程，于是借助 AI 编写了这个工具，并根据自己的使用情况逐步测试和完善。
+
+现在把它开源出来，分享给有类似需求的人。如果刚好能帮你省下一些重复操作，就很值得了。也欢迎反馈问题、提出建议，一起把它改得更好。
+
 ## 适合哪些场景
 
 - **Excel 批量转存百度网盘**：一行一个原始链接，每行保存到不同目录。
