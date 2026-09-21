@@ -33,7 +33,7 @@
 
 ## 安装
 
-**第一次安装？打开 [分步安装图解](docs/INSTALLATION.md)**：从安装油猴到复制源码、保存脚本，每一步都有示意图。
+**第一次安装？打开 [分步安装图解](docs/INSTALLATION.md)**：包含安装、复制源码和保存脚本的步骤，并配有实际页面截图。
 
 1. 在 Edge / Chrome 中安装并启用 Tampermonkey，按扩展提示允许运行用户脚本。
 2. [点击安装最新脚本](https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js)。如果浏览器只展示源码，在 Tampermonkey 中添加脚本，粘贴完整源码并保存。
