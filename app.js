@@ -26,7 +26,7 @@
  </main></section>`;
  const $=id=>root.getElementById(id);
  let original=null,filename='',digest='',tasks=[],states={},account='',busy=false,stop=false,storageKey='',connected=false;
- let inputMode='excel',textRows=null;
+ let inputMode='excel',textRows=null,corrections={};
  const selected=new Set(),views=new Map();
  function note(text){$('log').textContent=(new Date().toLocaleTimeString()+' '+text+'\n'+$('log').textContent).slice(0,6000);}
  api.onTrace=note;
@@ -41,12 +41,15 @@
    $('copyall').disabled=!Object.values(states).some(s=>s.phase==='done');
    for(const {pathInput} of views.values())if(pathInput)pathInput.disabled=busy||connected;
    $('pause').disabled=!busy;$('export').disabled=busy||!original;$('selectall').disabled=busy;
+   for(const b of root.querySelectorAll('button.edit-task'))b.disabled=busy;
    for(const {check} of views.values())check.disabled=busy||check.dataset.invalid==='true';
  }
  function render(){
    for(const task of tasks){const view=views.get(task.key);if(!view)continue;const s=states[task.alias||task.key]||{};view.state.textContent='';
      const text=document.createElement('div');text.textContent=task.error||s.error||C.phases[s.phase]||'待处理';if(task.error||s.error)text.className='error';text.style.whiteSpace='pre-wrap';view.state.appendChild(text);
      if(s.phase==='done'){text.className='success-label';text.textContent='完成 · 点击链接复制';const a=document.createElement('button');a.className='copy-link';a.textContent=s.link;a.title='复制新分享链接（含提取码）';a.addEventListener('click',handler(async()=>{await copyText(s.link);status('第 '+task.row+' 行的新链接已复制（含提取码）。');}));view.state.appendChild(a);}
+     if(task.sourceNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent=task.sourceNotice;view.state.append(notice);}
+     if(task.error&&inputMode==='excel'){const edit=document.createElement('button');edit.className='edit-task';edit.textContent='修改并校验';edit.onclick=()=>editTask(task);view.state.append(edit);}
      view.check.checked=selected.has(task.key);
    }
    controls();
@@ -59,15 +62,39 @@
      for(const value of [task.row,task.name]){const td=document.createElement('td');td.textContent=value;row.appendChild(td);}
      const pathCell=document.createElement('td');let pathInput;
      if(inputMode==='text'&&!connected){pathInput=document.createElement('input');pathInput.type='text';pathInput.className='path-edit';pathInput.value=task.target;pathInput.setAttribute('aria-label','第'+task.row+'行目标目录');pathInput.addEventListener('change',handler(async()=>{let target;try{target=C.normalizePath(pathInput.value);}catch(e){pathInput.value=task.target;throw e;}const entry=textRows[task.row-2];entry.target=target;entry.raw=entry.source.url+(entry.source.pwd?'?pwd='+entry.source.pwd:'')+'\n目标目录：'+target;$('shareText').value=textRows.map(t=>t.raw).join('\n\n');await importTextRows();}));pathCell.appendChild(pathInput);}else pathCell.textContent=task.target;
-     if(task.pathNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent='已自动修正目录中的非法字符';pathCell.appendChild(notice);}
+     if(task.pathNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent=task.pathNotice;pathCell.appendChild(notice);}
      row.appendChild(pathCell);
      const state=document.createElement('td');row.appendChild(state);$('rows').appendChild(row);views.set(task.key,{check,state,pathInput});
    }
    render();
  }
+ async function applyCorrections(){
+   if(!Object.keys(corrections).length)return;
+   const w=new ExcelJS.Workbook();await w.xlsx.load(original);
+   for(const c of Object.values(corrections)){const sheet=w.getWorksheet(c.sheet);if(!sheet)throw Error('修正记录工作表不存在');sheet.getCell(c.row,2).value=c.raw;sheet.getCell(c.row,3).value=c.target;}
+   const parsed=C.importTasks(w);original=await w.xlsx.writeBuffer();tasks=parsed.tasks;
+   for(const task of tasks)if(!task.error)selected.add(task.key);
+ }
+ function editTask(task){
+   if(busy)return;
+   const dialog=document.createElement('dialog');dialog.style.cssText='width:min(680px,85vw);border:1px solid #ccd7e5;border-radius:12px;padding:20px';
+   const title=document.createElement('h3');title.textContent='修改 Excel 第 '+task.row+' 行';
+   const raw=document.createElement('textarea');raw.value=task.raw;raw.setAttribute('aria-label','原始链接');
+   const path=document.createElement('input');path.type='text';path.value=task.target;path.setAttribute('aria-label','转存路径');
+   const hint=document.createElement('p');hint.textContent='链接内换行会自动拼接；目录保留《书名号》。修正会保存到当前任务及导出表格。';
+   const error=document.createElement('p');error.className='error';
+   const confirm=document.createElement('button');confirm.textContent='保存并重新校验';confirm.className='save-task-edit';
+   confirm.onclick=async()=>{if(busy)return;try{
+     C.parseShare(raw.value);const target=C.normalizePath(path.value);busy=true;confirm.disabled=true;controls();
+     if(!connected)await connect();
+     const current=tasks.find(t=>t.key===task.key);if(!current?.error||states[current.alias||current.key]?.phase)throw Error('此任务已修正或已有处理进度，请先返回查看，避免修改已执行任务');
+     corrections[task.key]={sheet:task.sheet,row:task.row,raw:raw.value,target};await applyCorrections();await save();draw();dialog.close();status(summary()+'\n第 '+task.row+' 行已修正，导出时保留修正内容。');
+   }catch(e){error.textContent=e.message;}finally{busy=false;confirm.disabled=false;controls();}};
+   const close=document.createElement('button');close.textContent='取消';close.onclick=()=>{if(!busy)dialog.close();};dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});dialog.append(title,hint,raw,path,error,confirm,close);root.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
+ }
  async function save(){
    if(!storageKey)throw Error('进度存储尚未绑定账号');
-   const serialized=JSON.stringify({version:1,account,digest,states});
+   const serialized=JSON.stringify({version:1,account,digest,states,corrections});
    GM_setValue(storageKey,serialized);
    if(GM_getValue(storageKey,'')!==serialized)throw Object.assign(Error('进度保存失败，已停止以避免重复处理'),{fatal:true});
    render();
@@ -75,8 +102,8 @@
  async function connect(){
    const identity=await api.identity();account=identity.uk;storageKey='pan-excel-v1:'+account+':'+digest;
    const saved=GM_getValue(storageKey,'');
-   if(saved){const data=JSON.parse(saved);if(data.account!==account||data.digest!==digest||data.version!==1)throw Error('进度记录与文件或账号不匹配');states=data.states||{};}else states={};
-   connected=true;render();status(summary()+'\n已读取当前网盘账号和本文件进度。');
+   if(saved){const data=JSON.parse(saved);if(data.account!==account||data.digest!==digest||data.version!==1)throw Error('进度记录与文件或账号不匹配');states=data.states||{};corrections=data.corrections||{};await applyCorrections();}else states={};
+   connected=true;draw();status(summary()+'\n已读取当前网盘账号和本文件进度。');
  }
  async function load(file,stableInput){
    if(!file)return;if(!/\.xlsx$/i.test(file.name))throw Error('请先将表格另存为 .xlsx 格式');
@@ -84,7 +111,7 @@
    try{
      const buffer=await file.arrayBuffer();const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(buffer);
      const parsed=C.importTasks(workbook);const hash=await crypto.subtle.digest('SHA-256',stableInput?new TextEncoder().encode(stableInput):buffer);
-     original=buffer;filename=file.name;digest=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');tasks=parsed.tasks;states={};selected.clear();
+     original=buffer;filename=file.name;digest=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');tasks=parsed.tasks;states={};corrections={};selected.clear();
      for(const t of tasks)if(!t.error)selected.add(t.key);
      draw();status(summary()+'\n导入完成，检查目标目录后点击“开始处理选中项”。');note('已读取 '+tasks.length+' 行，尚未执行转存。');
    }finally{busy=false;controls();}
@@ -95,18 +122,24 @@
    busy=true;stop=false;controls();
    try{await navigator.locks.request('pan-excel-transfer',{ifAvailable:true},async lock=>{
      if(!lock)throw Error('另一个网盘页面正在处理，请先暂停那里');
+     const batchOptions=globalThis.PanShareSettings?.read('transfer')||{period:365,pwd:''};
      await connect();
      const queue=tasks.filter(t=>(failedOnly?Boolean(states[t.alias||t.key]?.error):selected.has(t.key))&&!t.error&&states[t.alias||t.key]?.phase!=='done');
      const unique=[...new Map(queue.map(t=>[t.alias||t.key,t])).values()];
-     for(const entry of (firstOnly?unique.slice(0,1):unique)){
-       if(stop)break;
-       const task=entry.alias?tasks.find(t=>t.key===entry.alias):entry;
+     const P=globalThis.PanPipeline,sourceGate=P.gate(),writeGate=P.gate();
+     const delay=P.limiter(ms=>new Promise(r=>setTimeout(r,ms)),()=>stop);
+     const running=new Map();
+     await P.run((firstOnly?unique.slice(0,1):unique).map(e=>e.alias?tasks.find(t=>t.key===e.alias):e),async task=>{
+       task.shareOptions=batchOptions;
+       const raw=new globalThis.PanExcelAPI.BaiduAPI(undefined,delay);
+       raw.onTrace=text=>{running.set(task.key,'第 '+task.row+' 行：'+text);status(summary()+'\n双任务流水线（最多 2 条）\n'+[...running.values()].join('\n'));note('第 '+task.row+' 行：'+text);};
+       const taskAPI=P.isolate(raw,sourceGate,writeGate);
        const state=states[task.key]||(states[task.key]={phase:'new'});
-       status(summary()+'\n正在处理：'+task.name);note('第 '+task.row+' 行：开始处理');
-       try{await C.runTask({task,state,api,account,save,stopped:()=>stop});note('第 '+task.row+' 行：完成，分享范围与365天有效期已核验');}
-       catch(e){state.error=C.formatError(task,state,e);await save();note(state.error);if(e.fatal||e.yearUnsupported||e.paused){stop=true;break;}}
-       render();
-     }
+       note('第 '+task.row+' 行：开始处理');
+       try{await C.runTask({task,state,api:taskAPI,account,save,stopped:()=>stop});note('第 '+task.row+' 行：完成，分享范围与所选有效期已核验');}
+       catch(e){if(e.fatal||e.yearUnsupported||e.paused)stop=true;state.error=C.formatError(task,state,e);await save();note(state.error);}
+       finally{running.delete(task.key);render();}
+     },()=>stop);
      status(summary()+(stop?'\n已暂停，可导出当前结果。':'\n本轮结束，可导出结果或选中未完成行重试。'));
    });}finally{busy=false;controls();render();}
  }

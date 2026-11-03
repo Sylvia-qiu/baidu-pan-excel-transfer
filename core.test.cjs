@@ -129,3 +129,11 @@ test('a permanent or wrong-content share is revoked, not exported as a yearly sh
   await assert.rejects(C.runTask({...f,account:'user1'}));
   assert.notEqual(f.state.phase,'done');assert.equal(f.calls.filter(x=>x[0]==='cancel').length,1);
 });
+test('wrapped share URLs and book-title directories import safely',()=>{
+ assert.equal(C.parseShare('https://pan.baidu.com/s/1ABC\r\nDEF?pwd=ab\n12\n提取码：ab12').key,'ABCDEF');
+ assert.equal(C.parseShare('https://pan.baidu.\ncom/s/1ABC?pwd=abcd').pwd,'abcd');
+ assert.throws(()=>C.parseShare('https://pan.baidu.com/s/1abc\nhttps://pan.baidu.com/s/1def'),/多个/);
+ assert.equal(C.normalizePath('/剧单/《示例》'),'/剧单/《示例》');
+ assert.equal(C.normalizePath('/剧单/《示\n例》'),'/剧单/《示例》');
+});
+test('expiry validation supports all configured durations',()=>{for(const period of [0,1,7,30,365]){const result=C.validateRecord({fsIds:['1'],expiredTime:period*86400},['1'],Date.now(),Date.now(),period);assert.ok(result);}assert.throws(()=>C.validateRecord({fsIds:['1'],expiredTime:86400},['1'],Date.now(),Date.now(),0));});

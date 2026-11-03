@@ -116,3 +116,10 @@ test('paginated listings retain all items and reject repeated pages',async()=>{
  api.request=async()=>({errno:0,list:Array.from({length:100},(_,i)=>({fs_id:i+1,server_filename:'f'+i,isdir:0,size:1}))});
  await assert.rejects(api.pages('/api/list',{},100));
 });
+test('own directory keeps reading after short page and reports incomplete reads',async()=>{
+ const pages=[];const api=new A.BaiduAPI(async()=>{},async()=>{});
+ api.request=async(_path,q)=>{pages.push(q.page);return {list:q.page<=3?[{...pageFile,fs_id:q.page,server_filename:q.page+'.mp4'}]:[]};};
+ assert.equal((await api.list('/test')).length,3);assert.deepEqual(pages,[1,2,3,4]);
+ api.request=async(_path,q)=>{if(q.page===2)throw Error('network');return {list:[pageFile]};};
+ await assert.rejects(api.list('/test'),/读取未完成.*第 2 页/);
+});

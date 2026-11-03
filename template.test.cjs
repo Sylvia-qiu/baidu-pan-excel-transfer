@@ -53,3 +53,12 @@ test('extra text columns are ignored during processing and preserved after inser
  assert.equal(result.getCell('G2').font.bold,true);assert.equal(result.getColumn(7).width,42);
  assert.equal(result.getCell('C2').text,'');
 });
+test('export snapshots shared formulas before inserting link column',async()=>{
+ const w=C.createTemplate(ExcelJS,{example:false}),s=w.worksheets[0];
+ for(let i=2;i<=4;i++)s.addRow([i,'https://pan.baidu.com/s/1abc'+i,'','备注']);
+ s.getCell('C2').value={formula:'"/资源/"&A2',result:'/资源/2',shareType:'shared',ref:'C2:C4'};
+ s.getCell('C3').value={sharedFormula:'C2',result:'/资源/3'};s.getCell('C4').value={sharedFormula:'C2',result:'/资源/4'};
+ s.getCell('E1').value='附加';s.getCell('E2').value={formula:'A2+1',result:3};
+ const out=new ExcelJS.Workbook();await out.xlsx.load(await C.exportResults(await w.xlsx.writeBuffer(),{'导入模板:2':{phase:'done',link:'https://pan.baidu.com/s/1NEW'}},ExcelJS));
+ const result=out.worksheets[0];assert.equal(result.getCell('D4').value,'/资源/4');assert.equal(result.getCell('F2').value,3);assert.equal(result.getCell('E4').value,'备注');assert.equal(result.getCell('C3').text,'');assert.match(result.getCell('C2').text,/1NEW/);
+});

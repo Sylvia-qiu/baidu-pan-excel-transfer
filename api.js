@@ -62,19 +62,21 @@
      }
      log('诊断结束，未写入任何网盘文件');return {ok};
    }
-   async pages(path,query={},num=100,onPage=()=>{}){
+   async pages(path,query={},num=100,onPage=()=>{},exhaust=false){
      const out=[],seen=new Set();
      for(let page=1;;page++){
-       const data=await this.request(path,{...query,page,num});
+       let data;try{data=await this.request(path,{...query,page,num});}catch(e){if(exhaust)e.message="目录读取未完成，第 "+page+" 页，已读取 "+out.length+" 项："+e.message;throw e;}
        onPage(data);
        if(!Array.isArray(data.list))throw Error('百度未返回完整文件列表');
        for(const raw of data.list){const obj=item(raw);if(seen.has(obj.id))throw Error('百度分页重复，已停止以避免遗漏文件');seen.add(obj.id);out.push(obj);}
-       if(data.list.length<num&&Number(data.has_more||0)!==1)break;
+       this.onTrace('读取列表：第 '+page+' 页，累计 '+out.length+' 项'+(query.dir?'，'+query.dir:''));
+       if(!data.list.length&&Number(data.has_more||data.hasMore||0)!==1)break;
+       if(!exhaust&&data.list.length<num&&Number(data.has_more||data.hasMore||0)!==1)break;
        if(!data.list.length)throw Error('分页状态异常');
      }
      return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:a.id.localeCompare(b.id));
    }
-   async list(path){return this.pages('/api/list',{dir:path,order:'name',desc:0,showempty:0});}
+   async list(path){return this.pages('/api/list',{dir:path,order:'name',desc:0,showempty:0},100,()=>{},true);}
    async mkdir(path){
      let current='';for(const part of path.split('/').filter(Boolean)){
        current+='/'+part;
@@ -166,8 +168,9 @@
      };
      for(let i=0;i<sources.length;i++)await walk(roots.find(x=>x.id===sources[i].id),destinations[i],reusedIds.includes(destinations[i].id));
    }
-   async createShare(ids,pwd){
-     try{return await this.request('/share/set',{}, {fid_list:numericList(ids),schannel:4,channel_list:'[]',period:365,pwd,eflag_disable:'true'});}
+   async createShare(ids,pwd,period=365){
+     if(![0,1,7,30,365].includes(period))throw Error("有效期无效");
+     try{return await this.request('/share/set',{}, {fid_list:numericList(ids),schannel:4,channel_list:'[]',period,pwd,eflag_disable:'true'});}
      catch(e){if(e.errno===2)e.yearUnsupported=true;throw e;}
    }
    async shareRecords(wanted){

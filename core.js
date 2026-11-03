@@ -4,8 +4,11 @@
   const DAY=86400, PERIOD=365;
   const phases={'new':'待处理','prepared':'待转存','transfer-pending':'转存待核实','transferred':'已转存，待分享','share-pending':'分享请求待核实','share-created':'分享已创建，待核验','done':'完成'};
   function fail(message,extra={}) {return Object.assign(new Error(message),extra);}
+  function cleanShareText(text){
+    return String(text||'').replace(/[\u200b\ufeff]/g,'').replace(/https?:[A-Za-z0-9:/?&=_#.%+-]*(?:[ \t]*\r?\n[ \t]*(?!https?:)[A-Za-z0-9/?&=_#.%+-]+)*/g,part=>part.replace(/[ \t\r\n]/g,''));
+  }
   function parseShare(text) {
-    text=String(text||'');
+    text=cleanShareText(text);
     const found=[];
     for(const match of text.matchAll(/https?:\/\/(?:pan|yun)\.baidu\.com\/[^\s<>"，。；）]+/g)){
       const url=new URL(match[0].replace(/[.,;)]*$/,''));
@@ -23,7 +26,7 @@
     return {key:keys[0],pwd,url:'https://pan.baidu.com/s/1'+keys[0]};
   }
   function normalizePath(path){
-    path=String(path||'').trim();if(!path)throw fail('转存路径不能为空');
+    path=String(path||'').replace(/[\r\n\u200b\ufeff]/g,'').trim();if(!path)throw fail('转存路径不能为空');
     if(!path.startsWith('/'))throw fail('转存路径必须以 / 开头');
     if(/[\\\x00-\x1f]/.test(path))throw fail('路径含反斜杠或控制字符');
     const parts=path.split('/').filter(Boolean);
@@ -33,7 +36,7 @@
   }
   function parseTextShares(text,target){
     target=normalizePath(target);
-    text=String(text||'').replace(/\[(https?:\/\/(?:pan|yun)\.baidu\.com\/[^\]\s]+)\]\(\1\)/g,'$1');
+    text=cleanShareText(text).replace(/\[(https?:\/\/(?:pan|yun)\.baidu\.com\/[^\]\s]+)\]\(\1\)/g,'$1');
     const links=[...text.matchAll(/https?:\/\/(?:pan|yun)\.baidu\.com\/[^\s<>"，。；）]+/g)];
     if(!links.length)throw fail('未识别到百度分享链接，请粘贴链接及提取码');
     return links.map((m,i)=>{
@@ -80,7 +83,7 @@
         const raw=cellText(row.getCell(2)),targetRaw=cellText(row.getCell(3));
         if(!raw.trim()&&!targetRaw.trim())return;
         const task={key:sheet.name+':'+n,sheet:sheet.name,row:n,raw,target:targetRaw,name:targetRaw.split('/').filter(Boolean).pop()||'第'+n+'行'};
-        try{task.source=parseShare(raw);task.target=normalizePath(targetRaw);if(/[:*?"<>|]/.test(targetRaw))task.pathNotice='目标目录字符已自动修正：'+task.target;}catch(e){task.error=e.message;}
+        const problems=[];try{task.source=parseShare(raw);if(cleanShareText(raw)!==raw)task.sourceNotice='已拼接链接内换行或清除不可见字符：'+task.source.url+(task.source.pwd?'?pwd='+task.source.pwd:'');}catch(e){problems.push('原始链接：'+e.message);}try{task.target=normalizePath(targetRaw);if(task.target!==targetRaw)task.pathNotice='目标目录格式已自动修正：'+task.target;}catch(e){problems.push('转存路径：'+e.message);}if(problems.length)task.error=problems.join('\n');
         tasks.push(task);
       });
     }
@@ -94,6 +97,14 @@
     const {tasks,sheets}=importTasks(workbook);
     for(const name of sheets){
       const s=workbook.getWorksheet(name);
+      // Export the calculated snapshot. Inserting a column does not relocate
+      // ExcelJS shared-formula masters or formula references safely.
+      const snapshots=[];
+      s.eachRow(row=>row.eachCell(cell=>{const v=cell.value;if(v&&typeof v==='object'&&('formula' in v||'sharedFormula' in v)){
+        if(!Object.prototype.hasOwnProperty.call(v,'result')||v.result===undefined)throw fail('工作表 '+name+' 单元格 '+cell.address+' 的公式没有已保存的计算结果，请在 Excel 中重新计算并保存后再导出');
+        snapshots.push([cell,v.result]);
+      }}));
+      for(const [cell,value] of snapshots)cell.value=value;
       s.spliceColumns(3,0,[]);s.getCell('C1').value='转存链接';s.getColumn(3).width=65;
       s.getCell('C1').font={bold:true};s.getCell('C1').note='仅核验成功的任务输出新链接（含提取码）；失败或未完成留空。';
     }
@@ -120,7 +131,7 @@
   function reconcile(expected,own,beforeIds){
     return expected.map(src=>{const matches=own.filter(x=>!beforeIds.includes(x.id)&&sameFile(src,x));if(matches.length!==1)throw fail('转存结果尚不能唯一核实：'+src.name+'。未自动重复转存，请核查网盘后重试。');return matches[0];});
   }
-  function validateRecord(record,ids,started,observed=Date.now()){
+  function validateRecord(record,ids,started,observed=Date.now(),period=365){
     if(!sameSet((record.fsIds||record.fs_ids||[]).map(String),ids))throw fail('分享中的文件与原分享不一致',{mismatch:true});
     if(record.status!==undefined&&Number(record.status)!==0)throw fail('百度返回的分享状态异常');
     let end=Number(record.expiredTime??record.expiretime??record.expire_time);
@@ -128,12 +139,13 @@
     if(end>1e12){end/=1000;interpretation='Unix毫秒时间戳';}
     else if(end>0&&end<=PERIOD*DAY){end=observed/1000+end;interpretation='剩余有效秒数（读取时刻加剩余秒数）';}
     if(!Number.isFinite(end))throw fail('百度未返回可核实的到期时间');
-    const expected=started/1000+PERIOD*DAY;
+    if(period===0){if(end!==0)throw fail('未按永久有效创建分享',{mismatch:true});return '永久有效';}
+    const expected=started/1000+period*DAY;
     if(Math.abs(end-expected)>300){
       const raw=record.expiredTime??record.expiretime??record.expire_time;
       const validDate=Number.isFinite(new Date(end*1000).getTime());
-      const diagnostic='请求有效期：365天；expiredTime='+String(raw)+'；解释方式：'+interpretation+'；expiredType='+String(record.expiredType??'未提供')+'；创建请求时间：'+new Date(started).toISOString()+'；预期到期：'+new Date(expected*1000).toISOString()+'；返回到期：'+(end===0?'0（未给出有限到期时间）':validDate?new Date(end*1000).toISOString():'无法转换为日期')+'；按返回时间计算的天数：'+((end-started/1000)/DAY).toFixed(3)+'；与预期相差秒数：'+Math.round(end-expected);
-      throw fail('分享记录的到期时间未通过365天核验；已停止，具体返回值见有效期诊断',{mismatch:true,yearUnsupported:true,expiryDiagnostic:diagnostic});
+      const diagnostic='请求有效期：'+period+'天；expiredTime='+String(raw)+'；解释方式：'+interpretation+'；expiredType='+String(record.expiredType??'未提供')+'；创建请求时间：'+new Date(started).toISOString()+'；预期到期：'+new Date(expected*1000).toISOString()+'；返回到期：'+(end===0?'0（未给出有限到期时间）':validDate?new Date(end*1000).toISOString():'无法转换为日期')+'；按返回时间计算的天数：'+((end-started/1000)/DAY).toFixed(3)+'；与预期相差秒数：'+Math.round(end-expected);
+      throw fail('分享记录的到期时间未通过'+period+'天核验；已停止，具体返回值见有效期诊断',{mismatch:true,yearUnsupported:true,expiryDiagnostic:diagnostic});
     }
     return new Date(end*1000).toISOString();
   }
@@ -157,6 +169,8 @@
     const persist=async()=>{await save();};
     const guard=async()=>{if(stopped())throw fail('已暂停',{paused:true});try{if(String((await api.identity()).uk)!==String(account))throw fail('网盘账号发生变化，已停止',{fatal:true});}catch(e){e.step='核验当前账号';throw e;}};
     if(task.error)throw fail(task.error);
+    state.shareOptions=state.shareOptions||(state.phase&&state.phase!=='new'?{period:365,pwd:''}:task.shareOptions||{period:365,pwd:''});
+    if(![0,1,7,30,365].includes(state.shareOptions.period)||(state.shareOptions.pwd&&!/^[a-zA-Z0-9]{4}$/.test(state.shareOptions.pwd)))throw fail('分享设置无效');
     await guard();if(state.phase==='done')return state;
     state.error='';state.phase=state.phase||'new';
     if(state.phase==='new'){
@@ -219,10 +233,10 @@
         if(!dest||!sameFile(state.source[i],dest))throw fail('已转存文件被移动、删除或更改，请核查：'+state.source[i].name);
       }
       state.step='逐项核验原分享与转存内容';await api.verifyTree(state.source,state.completed,task.source,state.reusedIds||[]);
-      state.pwd=state.pwd||randomPwd();state.started=Date.now();state.phase='share-pending';await persist();
+      state.pwd=state.pwd||state.shareOptions.pwd||randomPwd();state.started=Date.now();state.phase='share-pending';await persist();
       try {
         state.step='创建365天新分享';
-        const result=await api.createShare(state.completed.map(x=>x.id),state.pwd);
+        const result=await api.createShare(state.completed.map(x=>x.id),state.pwd,state.shareOptions.period);
         state.shareId=String(result.shareid||result.share_id||'');state.rawLink=result.link||result.shorturl||'';
         if(!state.shareId||!state.rawLink)throw fail('分享接口没有返回完整链接信息；请在我的分享中核查');
         state.phase='share-created';await persist();
@@ -234,7 +248,7 @@
       await guard();const records=await api.shareRecords(state.shareId);
       const record=records.find(r=>String(r.shareId??r.shareid)===state.shareId);
       if(!record)throw fail('新分享尚未出现在分享记录中，稍后重试将只核验，不再转存');
-      try{state.expiry=validateRecord(record,state.completed.map(x=>x.id),state.started);}
+      try{state.expiry=validateRecord(record,state.completed.map(x=>x.id),state.started,Date.now(),state.shareOptions.period);}
       catch(e){if(e.expiryDiagnostic){state.expiryDiagnostic=e.expiryDiagnostic;await persist();}if(e.mismatch){await api.cancelShare(state.shareId);e.shareCancelled=true;state.phase='transferred';delete state.shareId;delete state.rawLink;await persist();}throw e;}
       const link=new URL(state.rawLink,'https://pan.baidu.com');
       if(link.hostname!=='pan.baidu.com'||link.protocol!=='https:')throw fail('分享接口返回了异常地址');

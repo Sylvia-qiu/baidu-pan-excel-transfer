@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         百度网盘 Excel 转存与换链助手
 // @namespace    local.pan-excel-assistant
-// @version      3.1.1
+// @version      3.4.3
 // @author       Sylvia-qiu
 // @homepageURL  https://github.com/Sylvia-qiu/baidu-pan-excel-transfer
 // @supportURL   https://github.com/Sylvia-qiu/baidu-pan-excel-transfer/issues
 // @downloadURL  https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js
 // @updateURL    https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js
-// @description  Excel逐行建目录、转存、生成365天分享并导出独立转存链接列；保存进度，验证分享内容。
+// @description  Excel转存换链；已有剧集按集数批量分享前10集，支持嵌套目录、365天有效期和Excel导出。
 // @match        https://pan.baidu.com/disk/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -144,8 +144,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   const DAY=86400, PERIOD=365;
   const phases={'new':'待处理','prepared':'待转存','transfer-pending':'转存待核实','transferred':'已转存，待分享','share-pending':'分享请求待核实','share-created':'分享已创建，待核验','done':'完成'};
   function fail(message,extra={}) {return Object.assign(new Error(message),extra);}
+  function cleanShareText(text){
+    return String(text||'').replace(/[\u200b\ufeff]/g,'').replace(/https?:[A-Za-z0-9:/?&=_#.%+-]*(?:[ \t]*\r?\n[ \t]*(?!https?:)[A-Za-z0-9/?&=_#.%+-]+)*/g,part=>part.replace(/[ \t\r\n]/g,''));
+  }
   function parseShare(text) {
-    text=String(text||'');
+    text=cleanShareText(text);
     const found=[];
     for(const match of text.matchAll(/https?:\/\/(?:pan|yun)\.baidu\.com\/[^\s<>"，。；）]+/g)){
       const url=new URL(match[0].replace(/[.,;)]*$/,''));
@@ -163,7 +166,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return {key:keys[0],pwd,url:'https://pan.baidu.com/s/1'+keys[0]};
   }
   function normalizePath(path){
-    path=String(path||'').trim();if(!path)throw fail('转存路径不能为空');
+    path=String(path||'').replace(/[\r\n\u200b\ufeff]/g,'').trim();if(!path)throw fail('转存路径不能为空');
     if(!path.startsWith('/'))throw fail('转存路径必须以 / 开头');
     if(/[\\\x00-\x1f]/.test(path))throw fail('路径含反斜杠或控制字符');
     const parts=path.split('/').filter(Boolean);
@@ -173,7 +176,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   }
   function parseTextShares(text,target){
     target=normalizePath(target);
-    text=String(text||'').replace(/\[(https?:\/\/(?:pan|yun)\.baidu\.com\/[^\]\s]+)\]\(\1\)/g,'$1');
+    text=cleanShareText(text).replace(/\[(https?:\/\/(?:pan|yun)\.baidu\.com\/[^\]\s]+)\]\(\1\)/g,'$1');
     const links=[...text.matchAll(/https?:\/\/(?:pan|yun)\.baidu\.com\/[^\s<>"，。；）]+/g)];
     if(!links.length)throw fail('未识别到百度分享链接，请粘贴链接及提取码');
     return links.map((m,i)=>{
@@ -220,7 +223,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const raw=cellText(row.getCell(2)),targetRaw=cellText(row.getCell(3));
         if(!raw.trim()&&!targetRaw.trim())return;
         const task={key:sheet.name+':'+n,sheet:sheet.name,row:n,raw,target:targetRaw,name:targetRaw.split('/').filter(Boolean).pop()||'第'+n+'行'};
-        try{task.source=parseShare(raw);task.target=normalizePath(targetRaw);if(/[:*?"<>|]/.test(targetRaw))task.pathNotice='目标目录字符已自动修正：'+task.target;}catch(e){task.error=e.message;}
+        const problems=[];try{task.source=parseShare(raw);if(cleanShareText(raw)!==raw)task.sourceNotice='已拼接链接内换行或清除不可见字符：'+task.source.url+(task.source.pwd?'?pwd='+task.source.pwd:'');}catch(e){problems.push('原始链接：'+e.message);}try{task.target=normalizePath(targetRaw);if(task.target!==targetRaw)task.pathNotice='目标目录格式已自动修正：'+task.target;}catch(e){problems.push('转存路径：'+e.message);}if(problems.length)task.error=problems.join('\n');
         tasks.push(task);
       });
     }
@@ -234,6 +237,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const {tasks,sheets}=importTasks(workbook);
     for(const name of sheets){
       const s=workbook.getWorksheet(name);
+      // Export the calculated snapshot. Inserting a column does not relocate
+      // ExcelJS shared-formula masters or formula references safely.
+      const snapshots=[];
+      s.eachRow(row=>row.eachCell(cell=>{const v=cell.value;if(v&&typeof v==='object'&&('formula' in v||'sharedFormula' in v)){
+        if(!Object.prototype.hasOwnProperty.call(v,'result')||v.result===undefined)throw fail('工作表 '+name+' 单元格 '+cell.address+' 的公式没有已保存的计算结果，请在 Excel 中重新计算并保存后再导出');
+        snapshots.push([cell,v.result]);
+      }}));
+      for(const [cell,value] of snapshots)cell.value=value;
       s.spliceColumns(3,0,[]);s.getCell('C1').value='转存链接';s.getColumn(3).width=65;
       s.getCell('C1').font={bold:true};s.getCell('C1').note='仅核验成功的任务输出新链接（含提取码）；失败或未完成留空。';
     }
@@ -260,7 +271,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   function reconcile(expected,own,beforeIds){
     return expected.map(src=>{const matches=own.filter(x=>!beforeIds.includes(x.id)&&sameFile(src,x));if(matches.length!==1)throw fail('转存结果尚不能唯一核实：'+src.name+'。未自动重复转存，请核查网盘后重试。');return matches[0];});
   }
-  function validateRecord(record,ids,started,observed=Date.now()){
+  function validateRecord(record,ids,started,observed=Date.now(),period=365){
     if(!sameSet((record.fsIds||record.fs_ids||[]).map(String),ids))throw fail('分享中的文件与原分享不一致',{mismatch:true});
     if(record.status!==undefined&&Number(record.status)!==0)throw fail('百度返回的分享状态异常');
     let end=Number(record.expiredTime??record.expiretime??record.expire_time);
@@ -268,12 +279,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if(end>1e12){end/=1000;interpretation='Unix毫秒时间戳';}
     else if(end>0&&end<=PERIOD*DAY){end=observed/1000+end;interpretation='剩余有效秒数（读取时刻加剩余秒数）';}
     if(!Number.isFinite(end))throw fail('百度未返回可核实的到期时间');
-    const expected=started/1000+PERIOD*DAY;
+    if(period===0){if(end!==0)throw fail('未按永久有效创建分享',{mismatch:true});return '永久有效';}
+    const expected=started/1000+period*DAY;
     if(Math.abs(end-expected)>300){
       const raw=record.expiredTime??record.expiretime??record.expire_time;
       const validDate=Number.isFinite(new Date(end*1000).getTime());
-      const diagnostic='请求有效期：365天；expiredTime='+String(raw)+'；解释方式：'+interpretation+'；expiredType='+String(record.expiredType??'未提供')+'；创建请求时间：'+new Date(started).toISOString()+'；预期到期：'+new Date(expected*1000).toISOString()+'；返回到期：'+(end===0?'0（未给出有限到期时间）':validDate?new Date(end*1000).toISOString():'无法转换为日期')+'；按返回时间计算的天数：'+((end-started/1000)/DAY).toFixed(3)+'；与预期相差秒数：'+Math.round(end-expected);
-      throw fail('分享记录的到期时间未通过365天核验；已停止，具体返回值见有效期诊断',{mismatch:true,yearUnsupported:true,expiryDiagnostic:diagnostic});
+      const diagnostic='请求有效期：'+period+'天；expiredTime='+String(raw)+'；解释方式：'+interpretation+'；expiredType='+String(record.expiredType??'未提供')+'；创建请求时间：'+new Date(started).toISOString()+'；预期到期：'+new Date(expected*1000).toISOString()+'；返回到期：'+(end===0?'0（未给出有限到期时间）':validDate?new Date(end*1000).toISOString():'无法转换为日期')+'；按返回时间计算的天数：'+((end-started/1000)/DAY).toFixed(3)+'；与预期相差秒数：'+Math.round(end-expected);
+      throw fail('分享记录的到期时间未通过'+period+'天核验；已停止，具体返回值见有效期诊断',{mismatch:true,yearUnsupported:true,expiryDiagnostic:diagnostic});
     }
     return new Date(end*1000).toISOString();
   }
@@ -297,6 +309,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const persist=async()=>{await save();};
     const guard=async()=>{if(stopped())throw fail('已暂停',{paused:true});try{if(String((await api.identity()).uk)!==String(account))throw fail('网盘账号发生变化，已停止',{fatal:true});}catch(e){e.step='核验当前账号';throw e;}};
     if(task.error)throw fail(task.error);
+    state.shareOptions=state.shareOptions||(state.phase&&state.phase!=='new'?{period:365,pwd:''}:task.shareOptions||{period:365,pwd:''});
+    if(![0,1,7,30,365].includes(state.shareOptions.period)||(state.shareOptions.pwd&&!/^[a-zA-Z0-9]{4}$/.test(state.shareOptions.pwd)))throw fail('分享设置无效');
     await guard();if(state.phase==='done')return state;
     state.error='';state.phase=state.phase||'new';
     if(state.phase==='new'){
@@ -359,10 +373,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if(!dest||!sameFile(state.source[i],dest))throw fail('已转存文件被移动、删除或更改，请核查：'+state.source[i].name);
       }
       state.step='逐项核验原分享与转存内容';await api.verifyTree(state.source,state.completed,task.source,state.reusedIds||[]);
-      state.pwd=state.pwd||randomPwd();state.started=Date.now();state.phase='share-pending';await persist();
+      state.pwd=state.pwd||state.shareOptions.pwd||randomPwd();state.started=Date.now();state.phase='share-pending';await persist();
       try {
         state.step='创建365天新分享';
-        const result=await api.createShare(state.completed.map(x=>x.id),state.pwd);
+        const result=await api.createShare(state.completed.map(x=>x.id),state.pwd,state.shareOptions.period);
         state.shareId=String(result.shareid||result.share_id||'');state.rawLink=result.link||result.shorturl||'';
         if(!state.shareId||!state.rawLink)throw fail('分享接口没有返回完整链接信息；请在我的分享中核查');
         state.phase='share-created';await persist();
@@ -374,7 +388,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       await guard();const records=await api.shareRecords(state.shareId);
       const record=records.find(r=>String(r.shareId??r.shareid)===state.shareId);
       if(!record)throw fail('新分享尚未出现在分享记录中，稍后重试将只核验，不再转存');
-      try{state.expiry=validateRecord(record,state.completed.map(x=>x.id),state.started);}
+      try{state.expiry=validateRecord(record,state.completed.map(x=>x.id),state.started,Date.now(),state.shareOptions.period);}
       catch(e){if(e.expiryDiagnostic){state.expiryDiagnostic=e.expiryDiagnostic;await persist();}if(e.mismatch){await api.cancelShare(state.shareId);e.shareCancelled=true;state.phase='transferred';delete state.shareId;delete state.rawLink;await persist();}throw e;}
       const link=new URL(state.rawLink,'https://pan.baidu.com');
       if(link.hostname!=='pan.baidu.com'||link.protocol!=='https:')throw fail('分享接口返回了异常地址');
@@ -450,19 +464,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
      }
      log('诊断结束，未写入任何网盘文件');return {ok};
    }
-   async pages(path,query={},num=100,onPage=()=>{}){
+   async pages(path,query={},num=100,onPage=()=>{},exhaust=false){
      const out=[],seen=new Set();
      for(let page=1;;page++){
-       const data=await this.request(path,{...query,page,num});
+       let data;try{data=await this.request(path,{...query,page,num});}catch(e){if(exhaust)e.message="目录读取未完成，第 "+page+" 页，已读取 "+out.length+" 项："+e.message;throw e;}
        onPage(data);
        if(!Array.isArray(data.list))throw Error('百度未返回完整文件列表');
        for(const raw of data.list){const obj=item(raw);if(seen.has(obj.id))throw Error('百度分页重复，已停止以避免遗漏文件');seen.add(obj.id);out.push(obj);}
-       if(data.list.length<num&&Number(data.has_more||0)!==1)break;
+       this.onTrace('读取列表：第 '+page+' 页，累计 '+out.length+' 项'+(query.dir?'，'+query.dir:''));
+       if(!data.list.length&&Number(data.has_more||data.hasMore||0)!==1)break;
+       if(!exhaust&&data.list.length<num&&Number(data.has_more||data.hasMore||0)!==1)break;
        if(!data.list.length)throw Error('分页状态异常');
      }
      return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:a.id.localeCompare(b.id));
    }
-   async list(path){return this.pages('/api/list',{dir:path,order:'name',desc:0,showempty:0});}
+   async list(path){return this.pages('/api/list',{dir:path,order:'name',desc:0,showempty:0},100,()=>{},true);}
    async mkdir(path){
      let current='';for(const part of path.split('/').filter(Boolean)){
        current+='/'+part;
@@ -554,8 +570,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
      };
      for(let i=0;i<sources.length;i++)await walk(roots.find(x=>x.id===sources[i].id),destinations[i],reusedIds.includes(destinations[i].id));
    }
-   async createShare(ids,pwd){
-     try{return await this.request('/share/set',{}, {fid_list:numericList(ids),schannel:4,channel_list:'[]',period:365,pwd,eflag_disable:'true'});}
+   async createShare(ids,pwd,period=365){
+     if(![0,1,7,30,365].includes(period))throw Error("有效期无效");
+     try{return await this.request('/share/set',{}, {fid_list:numericList(ids),schannel:4,channel_list:'[]',period,pwd,eflag_disable:'true'});}
      catch(e){if(e.errno===2)e.yearUnsupported=true;throw e;}
    }
    async shareRecords(wanted){
@@ -575,6 +592,123 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 });
 
 ;
+/* Own-drive episode previews. No transfer, move, rename or directory sharing. */
+(function(root,factory){const api=factory(typeof module==='object'&&module.exports?require('./core.js'):root.PanExcel);if(typeof module==='object'&&module.exports)module.exports=api;else root.PanPreview=api;})(globalThis,function(C){
+ 'use strict';
+ const video=/\.(mp4|mkv|mov|avi|flv|m4v|wmv|ts|webm)$/i;
+ function episode(name){
+   if(!video.test(name))return null;
+   const stem=name.normalize('NFKC').replace(/(?:[. _-]*(?:mp4|mkv|mov|avi|flv|m4v|wmv|ts|webm))+$/i,'').trim();
+   if(/\d\s*[-~至到]\s*\d|合集/.test(stem))return null;
+   const explicit=[...stem.matchAll(/第\s*(\d{1,3})\s*集/g)];
+   if(explicit.length)return explicit.length===1&&Number(explicit[0][1])>0?Number(explicit[0][1]):null;
+   if(/\d\s*[-~至到]\s*\d|合集|预告|花絮|1080p|2160p|720p/i.test(stem))return null;
+   let m=/^#(\d{1,3})(?!\d)/.exec(stem)||/^(?:EP?|Episode)\s*0*(\d{1,3})(?:[_ -]V\d+)?$/i.exec(stem)||/^(\d{1,3})(?:成片)?$/.exec(stem)||/^.*?[^\d](\d{1,3})$/.exec(stem);
+   return m&&Number(m[1])>0?Number(m[1]):null;
+ }
+ function reviewSelection(row,choices){
+   if(!choices.length||choices.length>10)throw Error('请选择 1–10 个文件');
+   const ids=new Set(),episodes=new Set();
+   return choices.map(c=>{
+     const f=row.candidates?.find(f=>f.id===c.id),n=Number(c.episode);
+     if(!f||f.dir||!video.test(f.name))throw Error('所选文件不在本次目录列表中');
+     if(!Number.isInteger(n)||n<1||n>10)throw Error('集数必须在 1–10 之间');
+     const known=episode(f.name);if(known!==null&&known!==n&&c.manualEpisode!==true)throw Error('集数与文件名不一致：'+f.name);
+     if(ids.has(f.id)||episodes.has(n))throw Error('存在重复集数，请每集只选一个版本');
+     ids.add(f.id);episodes.add(n);return {...f,episode:n,manualEpisode:known===null||c.manualEpisode===true};
+   }).sort((a,b)=>a.episode-b.episode);
+ }
+ function pathValue(path){path=String(path||'').trim();if(!path.startsWith('/')||/[\x00-\x1f\\]/.test(path)||path.split('/').some(p=>p==='.'||p==='..'))throw Error('请输入有效的网盘完整目录，以 / 开头');return '/'+path.split('/').filter(Boolean).join('/');}
+ const join=(p,n)=>(p==='/'?'':p)+'/'+n;
+ function selection(items){
+   const videos=items.filter(f=>!f.dir&&video.test(f.name));
+   const unknown=videos.filter(f=>episode(f.name)===null&&!/预告|花絮|片头|片尾/.test(f.name));
+   const files=videos.map(f=>({...f,episode:episode(f.name)})).filter(f=>f.episode>=1&&f.episode<=10).sort((a,b)=>a.episode-b.episode);
+   let error=unknown.length?'无法确定集数：'+unknown.map(f=>f.name).join('、'):'';
+   if(new Set(files.map(f=>f.episode)).size!==files.length)error='前 10 集有重复集数，请核对版本：'+files.map(f=>f.name).join('、');
+   const missing=Array.from({length:10},(_,i)=>i+1).filter(n=>!files.some(f=>f.episode===n));
+   return {videos,files,error,warning:files.length<10?'不足 10 集；未找到：'+missing.join('、')+'。仅分享已识别的第 1–10 集，不用后续集数补足。':''};
+ }
+ async function scan({root,list,stopped=()=>false,trace=()=>{}}){
+   root=pathValue(root);const seen=new Set();
+   async function walk(path,name){
+     if(stopped())throw Object.assign(Error('扫描已暂停，请重新扫描'),{paused:true});
+     if(seen.has(path))throw Error('发现重复目录，停止扫描：'+path);seen.add(path);trace('扫描：'+path);
+     let items;try{items=await list(path);}catch(e){return [{name,path,files:[],error:'目录读取未完成：'+e.message}];}
+     const chosen=selection(items);
+     if(chosen.files.length||chosen.videos.length){return [{name,path,candidates:chosen.videos,readCount:items.length,files:chosen.files,error:chosen.error||(!chosen.files.length?'未找到第 1–10 集视频':''),warning:chosen.warning}];}
+     const rows=[];
+     for(const d of items.filter(f=>f.dir)){
+       if(/^(封面|字幕|中文srt|英文srt|海报)$/i.test(d.name))continue;
+       const child=join(path,d.name);if(d.path&&d.path!==child)throw Error('目录路径不一致：'+child);
+       rows.push(...await walk(child,name));
+     }
+     return rows;
+   }
+   const items=await list(root),own=selection(items),rows=[];
+   if(own.videos.length)return walk(root,root.split('/').pop()||'网盘根目录');
+   for(const d of items.filter(f=>f.dir)){
+     if(stopped())throw Object.assign(Error('扫描已暂停，请重新扫描'),{paused:true});
+     const path=join(root,d.name);if(d.path&&d.path!==path)throw Error('目录路径不一致：'+path);
+     const found=await walk(path,d.name);
+     if(!found.length)rows.push({name:d.name,path,files:[],error:'未找到可识别的视频文件'});
+     else if(found.length>1)rows.push(...found.map(r=>({...r,name:d.name+' / '+r.path.slice(path.length+1),error:'发现多个含视频的子目录，请把扫描目录设为需要的具体版本目录后重试。'+(r.error||'')})));
+     else rows.push(...found);
+   }
+   return rows;
+ }
+ async function share({row,state,api,account,save,stopped=()=>false}){
+   if(row.error)throw Error(row.error);
+   if(!row.files?.length||row.files.length>10||row.files.some(f=>f.dir||(episode(f.name)!==f.episode&&!f.manualEpisode)||!Number.isInteger(f.episode)||f.episode<1||f.episode>10)||new Set(row.files.map(f=>f.episode)).size!==row.files.length)throw Error('预览文件选择无效');
+   if(stopped())throw Object.assign(Error('已暂停'),{paused:true});
+   if(String((await api.identity()).uk)!==String(account))throw Object.assign(Error('网盘账号已变化'),{fatal:true});
+   if(state.phase==='done')return state;
+   state.shareOptions=state.shareOptions||(state.phase?{period:365,pwd:''}:row.shareOptions||{period:365,pwd:''});
+   if(![0,1,7,30,365].includes(state.shareOptions.period)||(state.shareOptions.pwd&&!/^[a-zA-Z0-9]{4}$/.test(state.shareOptions.pwd)))throw Error('分享设置无效');
+   if(state.phase==='pending')throw Error('上次创建分享结果不明，请先核对“我的分享”，不会重复创建');
+   const current=await api.list(row.path);
+   if(row.files.some(f=>!current.some(n=>n.id===f.id&&C.sameFile(f,n))))throw Error('扫描后的文件已发生变化，请重新扫描核对');
+   if(!state.phase){
+     state.pwd=state.shareOptions.pwd||C.randomPwd();state.started=Date.now();state.phase='pending';await save();
+     if(stopped()){delete state.phase;await save();throw Object.assign(Error('已暂停'),{paused:true});}
+     try{
+       const result=await api.createShare(row.files.map(f=>f.id),state.pwd,state.shareOptions.period);
+       state.shareId=String(result.shareid||result.share_id||'');state.rawLink=result.link||result.shorturl||'';
+       if(!state.shareId||!state.rawLink)throw Error('分享响应不完整，请核对“我的分享”');
+       state.phase='created';await save();
+     }catch(e){if(e.definite){delete state.phase;await save();}throw e;}
+   }
+   if(state.phase==='created'){
+     const records=await api.shareRecords(state.shareId),record=records.find(r=>String(r.shareId??r.shareid)===state.shareId);
+     if(!record)throw Error('分享记录暂未返回，重试将继续核验');
+     try{state.expiry=C.validateRecord(record,row.files.map(f=>f.id),state.started,Date.now(),state.shareOptions.period);}
+     catch(e){if(e.mismatch){await api.cancelShare(state.shareId);delete state.phase;delete state.shareId;delete state.rawLink;await save();}throw e;}
+     const link=new URL(state.rawLink);if(link.hostname!=='pan.baidu.com'||!/^\/s\/1[\w-]+$/.test(link.pathname))throw Error('百度返回的新分享链接格式异常');
+     link.protocol='https:';link.searchParams.set('pwd',state.pwd);state.link=link.href;state.phase='done';state.error='';await save();
+   }
+   return state;
+ }
+ async function exportExcel(rows,ExcelJS){const w=new ExcelJS.Workbook(),s=w.addWorksheet('前10集预览');s.addRow(['文件夹','分享链接']);s.getRow(1).font={bold:true};s.getColumn(1).width=48;s.getColumn(2).width=80;for(const r of rows){const link=r.state?.phase==='done'?r.state.link:'';s.addRow([r.name,link?{text:link,hyperlink:link}:'']);}return w.xlsx.writeBuffer();}
+ return {episode,reviewSelection,pathValue,selection,scan,share,exportExcel};
+});
+
+;
+(function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.PanPipeline=api;})(globalThis,function(){
+ const gate=()=>{let tail=Promise.resolve();return fn=>{const next=tail.then(fn);tail=next.catch(()=>{});return next;};};
+ function limiter(wait,stopped){const enter=gate();return ms=>enter(async()=>{if(stopped())throw Object.assign(Error('已暂停'),{paused:true});await wait(ms);if(stopped())throw Object.assign(Error('已暂停'),{paused:true});});}
+ function isolate(api,sourceGate,writeGate){return new Proxy(api,{get(target,name){const value=target[name];if(typeof value!=='function')return value;if(['source','transfer','verifyTree'].includes(name))return (...args)=>sourceGate(()=>value.apply(target,args));if(name==='mkdir')return (...args)=>writeGate(()=>value.apply(target,args));return value.bind(target);}});}
+ function overlaps(a,b){a=a.replace(/\/$/,'');b=b.replace(/\/$/,'');return a===b||a.startsWith(b+'/')||b.startsWith(a+'/');}
+ async function run(tasks,work,stopped=()=>false){const pending=[...tasks],active=new Map();let failure;
+   while(pending.length||active.size){
+     if(!stopped()&&!failure){while(active.size<2){const index=pending.findIndex(t=>![...active.keys()].some(a=>overlaps(a.target,t.target)));if(index<0)break;const task=pending.splice(index,1)[0];const promise=Promise.resolve().then(()=>work(task)).catch(e=>{failure=e;}).finally(()=>active.delete(task));active.set(task,promise);}}
+     if(!active.size)break;await Promise.race(active.values());
+   }
+   if(failure)throw failure;
+ }
+ return {gate,limiter,isolate,run};
+});
+
+;
 (function(){
  'use strict';
  const C=globalThis.PanExcel,api=new globalThis.PanExcelAPI.BaiduAPI();
@@ -590,7 +724,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  button,.file{font:inherit;border:1px solid #ccd7e5;background:#fff;color:#203047;border-radius:7px;padding:7px 11px;cursor:pointer}button:hover{background:#edf4fc}button:disabled{opacity:.45;cursor:not-allowed}.primary{background:#1464ac;color:white;border-color:#1464ac}.primary:hover{background:#104d83}.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}input[type=file]{max-width:100%;font:inherit}.file{display:block;margin-bottom:12px}
  .summary{padding:10px 12px;background:#edf5fd;border-radius:7px;margin:10px 0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.error{color:#a22a20} .tablewrap{max-height:310px;overflow:auto;border:1px solid #e0e7ef;border-radius:7px}table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}th{background:#f1f5f9;position:sticky;top:0;text-align:left;padding:8px}td{border-top:1px solid #e6edf4;padding:8px;overflow-wrap:anywhere;vertical-align:top}th:first-child{width:42px}th:nth-child(2){width:46px}th:nth-child(3){width:23%}th:nth-child(4){width:28%}input[type=checkbox]{accent-color:#1464ac}a{color:#125faa}pre{max-height:100px;overflow:auto;white-space:pre-wrap;font:12px/1.6 system-ui;background:#f8fafc;padding:8px;border-radius:6px;margin:10px 0 0}.foot{font-size:12px;color:#68778b;margin-top:10px}main[hidden]{display:none}
  #textInput{display:grid;grid-template-columns:240px minmax(0,1fr);gap:12px}#textInput textarea{margin:0;min-height:110px}#textInput>.toolbar{grid-column:1/-1}@media(max-width:650px){#textInput{grid-template-columns:1fr}} .panel{width:1060px}th:nth-child(3){width:16%}th:nth-child(4){width:25%}.tabs{display:flex;gap:8px;margin-bottom:12px}.tabs button[aria-selected=true]{background:#e8f2ff;color:#125faa;border-color:#7aaee1}textarea,input[type=text]{font:inherit;box-sizing:border-box;border:1px solid #ccd7e5;border-radius:8px;padding:10px;width:100%;color:#203047}textarea{min-height:150px;resize:vertical;margin:10px 0}.copy-link{display:block;text-align:left;width:100%;border:0;background:#edf8f4;color:#08704e;padding:9px;overflow-wrap:anywhere;font-size:12px}.copy-link:hover{background:#d9f0e6}.tablewrap{max-height:380px}.path-edit{font-size:12px!important;padding:6px!important}details{margin-top:12px}summary{cursor:pointer;color:#617087}.success-label{color:#08704e;margin-bottom:5px}[hidden]{display:none!important}
- </style><section class="panel"><header><h2>百度网盘转存与换链助手 · 3.1.1</h2><button id="fold" aria-label="折叠面板">收起</button></header><main>
+ </style><section class="panel"><header><h2>百度网盘转存与换链助手 · 3.4.3</h2><button id="fold" aria-label="折叠面板">收起</button></header><main>
  <p class="intro">每行自动创建目标目录，按原分享内容生成新链接。365 天有效 · 随机提取码 · 保留原文件名</p>
  <div class="tabs" role="tablist"><button id="excelTab" role="tab" aria-selected="true">Excel 导入</button><button id="textTab" role="tab" aria-selected="false">粘贴分享文本</button></div>
  <div id="excelInput"><label class="file">选择 Excel（.xlsx） <input id="file" type="file" accept=".xlsx" /></label><div class="toolbar"><button id="downloadTemplate">下载 Excel 模板</button><span class="foot">填写 B 列原始链接、C 列转存路径，每行一条。备注右侧可追加文字列，导出保留；自动新增独立的“转存链接”列。</span></div></div>
@@ -603,7 +737,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  </main></section>`;
  const $=id=>root.getElementById(id);
  let original=null,filename='',digest='',tasks=[],states={},account='',busy=false,stop=false,storageKey='',connected=false;
- let inputMode='excel',textRows=null;
+ let inputMode='excel',textRows=null,corrections={};
  const selected=new Set(),views=new Map();
  function note(text){$('log').textContent=(new Date().toLocaleTimeString()+' '+text+'\n'+$('log').textContent).slice(0,6000);}
  api.onTrace=note;
@@ -618,12 +752,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
    $('copyall').disabled=!Object.values(states).some(s=>s.phase==='done');
    for(const {pathInput} of views.values())if(pathInput)pathInput.disabled=busy||connected;
    $('pause').disabled=!busy;$('export').disabled=busy||!original;$('selectall').disabled=busy;
+   for(const b of root.querySelectorAll('button.edit-task'))b.disabled=busy;
    for(const {check} of views.values())check.disabled=busy||check.dataset.invalid==='true';
  }
  function render(){
    for(const task of tasks){const view=views.get(task.key);if(!view)continue;const s=states[task.alias||task.key]||{};view.state.textContent='';
      const text=document.createElement('div');text.textContent=task.error||s.error||C.phases[s.phase]||'待处理';if(task.error||s.error)text.className='error';text.style.whiteSpace='pre-wrap';view.state.appendChild(text);
      if(s.phase==='done'){text.className='success-label';text.textContent='完成 · 点击链接复制';const a=document.createElement('button');a.className='copy-link';a.textContent=s.link;a.title='复制新分享链接（含提取码）';a.addEventListener('click',handler(async()=>{await copyText(s.link);status('第 '+task.row+' 行的新链接已复制（含提取码）。');}));view.state.appendChild(a);}
+     if(task.sourceNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent=task.sourceNotice;view.state.append(notice);}
+     if(task.error&&inputMode==='excel'){const edit=document.createElement('button');edit.className='edit-task';edit.textContent='修改并校验';edit.onclick=()=>editTask(task);view.state.append(edit);}
      view.check.checked=selected.has(task.key);
    }
    controls();
@@ -636,15 +773,39 @@ https://github.com/nodeca/pako/blob/main/LICENSE
      for(const value of [task.row,task.name]){const td=document.createElement('td');td.textContent=value;row.appendChild(td);}
      const pathCell=document.createElement('td');let pathInput;
      if(inputMode==='text'&&!connected){pathInput=document.createElement('input');pathInput.type='text';pathInput.className='path-edit';pathInput.value=task.target;pathInput.setAttribute('aria-label','第'+task.row+'行目标目录');pathInput.addEventListener('change',handler(async()=>{let target;try{target=C.normalizePath(pathInput.value);}catch(e){pathInput.value=task.target;throw e;}const entry=textRows[task.row-2];entry.target=target;entry.raw=entry.source.url+(entry.source.pwd?'?pwd='+entry.source.pwd:'')+'\n目标目录：'+target;$('shareText').value=textRows.map(t=>t.raw).join('\n\n');await importTextRows();}));pathCell.appendChild(pathInput);}else pathCell.textContent=task.target;
-     if(task.pathNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent='已自动修正目录中的非法字符';pathCell.appendChild(notice);}
+     if(task.pathNotice){const notice=document.createElement('div');notice.className='foot';notice.textContent=task.pathNotice;pathCell.appendChild(notice);}
      row.appendChild(pathCell);
      const state=document.createElement('td');row.appendChild(state);$('rows').appendChild(row);views.set(task.key,{check,state,pathInput});
    }
    render();
  }
+ async function applyCorrections(){
+   if(!Object.keys(corrections).length)return;
+   const w=new ExcelJS.Workbook();await w.xlsx.load(original);
+   for(const c of Object.values(corrections)){const sheet=w.getWorksheet(c.sheet);if(!sheet)throw Error('修正记录工作表不存在');sheet.getCell(c.row,2).value=c.raw;sheet.getCell(c.row,3).value=c.target;}
+   const parsed=C.importTasks(w);original=await w.xlsx.writeBuffer();tasks=parsed.tasks;
+   for(const task of tasks)if(!task.error)selected.add(task.key);
+ }
+ function editTask(task){
+   if(busy)return;
+   const dialog=document.createElement('dialog');dialog.style.cssText='width:min(680px,85vw);border:1px solid #ccd7e5;border-radius:12px;padding:20px';
+   const title=document.createElement('h3');title.textContent='修改 Excel 第 '+task.row+' 行';
+   const raw=document.createElement('textarea');raw.value=task.raw;raw.setAttribute('aria-label','原始链接');
+   const path=document.createElement('input');path.type='text';path.value=task.target;path.setAttribute('aria-label','转存路径');
+   const hint=document.createElement('p');hint.textContent='链接内换行会自动拼接；目录保留《书名号》。修正会保存到当前任务及导出表格。';
+   const error=document.createElement('p');error.className='error';
+   const confirm=document.createElement('button');confirm.textContent='保存并重新校验';confirm.className='save-task-edit';
+   confirm.onclick=async()=>{if(busy)return;try{
+     C.parseShare(raw.value);const target=C.normalizePath(path.value);busy=true;confirm.disabled=true;controls();
+     if(!connected)await connect();
+     const current=tasks.find(t=>t.key===task.key);if(!current?.error||states[current.alias||current.key]?.phase)throw Error('此任务已修正或已有处理进度，请先返回查看，避免修改已执行任务');
+     corrections[task.key]={sheet:task.sheet,row:task.row,raw:raw.value,target};await applyCorrections();await save();draw();dialog.close();status(summary()+'\n第 '+task.row+' 行已修正，导出时保留修正内容。');
+   }catch(e){error.textContent=e.message;}finally{busy=false;confirm.disabled=false;controls();}};
+   const close=document.createElement('button');close.textContent='取消';close.onclick=()=>{if(!busy)dialog.close();};dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();});dialog.append(title,hint,raw,path,error,confirm,close);root.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
+ }
  async function save(){
    if(!storageKey)throw Error('进度存储尚未绑定账号');
-   const serialized=JSON.stringify({version:1,account,digest,states});
+   const serialized=JSON.stringify({version:1,account,digest,states,corrections});
    GM_setValue(storageKey,serialized);
    if(GM_getValue(storageKey,'')!==serialized)throw Object.assign(Error('进度保存失败，已停止以避免重复处理'),{fatal:true});
    render();
@@ -652,8 +813,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  async function connect(){
    const identity=await api.identity();account=identity.uk;storageKey='pan-excel-v1:'+account+':'+digest;
    const saved=GM_getValue(storageKey,'');
-   if(saved){const data=JSON.parse(saved);if(data.account!==account||data.digest!==digest||data.version!==1)throw Error('进度记录与文件或账号不匹配');states=data.states||{};}else states={};
-   connected=true;render();status(summary()+'\n已读取当前网盘账号和本文件进度。');
+   if(saved){const data=JSON.parse(saved);if(data.account!==account||data.digest!==digest||data.version!==1)throw Error('进度记录与文件或账号不匹配');states=data.states||{};corrections=data.corrections||{};await applyCorrections();}else states={};
+   connected=true;draw();status(summary()+'\n已读取当前网盘账号和本文件进度。');
  }
  async function load(file,stableInput){
    if(!file)return;if(!/\.xlsx$/i.test(file.name))throw Error('请先将表格另存为 .xlsx 格式');
@@ -661,7 +822,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
    try{
      const buffer=await file.arrayBuffer();const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(buffer);
      const parsed=C.importTasks(workbook);const hash=await crypto.subtle.digest('SHA-256',stableInput?new TextEncoder().encode(stableInput):buffer);
-     original=buffer;filename=file.name;digest=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');tasks=parsed.tasks;states={};selected.clear();
+     original=buffer;filename=file.name;digest=Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');tasks=parsed.tasks;states={};corrections={};selected.clear();
      for(const t of tasks)if(!t.error)selected.add(t.key);
      draw();status(summary()+'\n导入完成，检查目标目录后点击“开始处理选中项”。');note('已读取 '+tasks.length+' 行，尚未执行转存。');
    }finally{busy=false;controls();}
@@ -672,18 +833,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
    busy=true;stop=false;controls();
    try{await navigator.locks.request('pan-excel-transfer',{ifAvailable:true},async lock=>{
      if(!lock)throw Error('另一个网盘页面正在处理，请先暂停那里');
+     const batchOptions=globalThis.PanShareSettings?.read('transfer')||{period:365,pwd:''};
      await connect();
      const queue=tasks.filter(t=>(failedOnly?Boolean(states[t.alias||t.key]?.error):selected.has(t.key))&&!t.error&&states[t.alias||t.key]?.phase!=='done');
      const unique=[...new Map(queue.map(t=>[t.alias||t.key,t])).values()];
-     for(const entry of (firstOnly?unique.slice(0,1):unique)){
-       if(stop)break;
-       const task=entry.alias?tasks.find(t=>t.key===entry.alias):entry;
+     const P=globalThis.PanPipeline,sourceGate=P.gate(),writeGate=P.gate();
+     const delay=P.limiter(ms=>new Promise(r=>setTimeout(r,ms)),()=>stop);
+     const running=new Map();
+     await P.run((firstOnly?unique.slice(0,1):unique).map(e=>e.alias?tasks.find(t=>t.key===e.alias):e),async task=>{
+       task.shareOptions=batchOptions;
+       const raw=new globalThis.PanExcelAPI.BaiduAPI(undefined,delay);
+       raw.onTrace=text=>{running.set(task.key,'第 '+task.row+' 行：'+text);status(summary()+'\n双任务流水线（最多 2 条）\n'+[...running.values()].join('\n'));note('第 '+task.row+' 行：'+text);};
+       const taskAPI=P.isolate(raw,sourceGate,writeGate);
        const state=states[task.key]||(states[task.key]={phase:'new'});
-       status(summary()+'\n正在处理：'+task.name);note('第 '+task.row+' 行：开始处理');
-       try{await C.runTask({task,state,api,account,save,stopped:()=>stop});note('第 '+task.row+' 行：完成，分享范围与365天有效期已核验');}
-       catch(e){state.error=C.formatError(task,state,e);await save();note(state.error);if(e.fatal||e.yearUnsupported||e.paused){stop=true;break;}}
-       render();
-     }
+       note('第 '+task.row+' 行：开始处理');
+       try{await C.runTask({task,state,api:taskAPI,account,save,stopped:()=>stop});note('第 '+task.row+' 行：完成，分享范围与所选有效期已核验');}
+       catch(e){if(e.fatal||e.yearUnsupported||e.paused)stop=true;state.error=C.formatError(task,state,e);await save();note(state.error);}
+       finally{running.delete(task.key);render();}
+     },()=>stop);
      status(summary()+(stop?'\n已暂停，可导出当前结果。':'\n本轮结束，可导出结果或选中未完成行重试。'));
    });}finally{busy=false;controls();render();}
  }
@@ -716,7 +883,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
      await navigator.locks.request('pan-excel-transfer',{ifAvailable:true},async lock=>{if(!lock)throw Error('另一个页面正在处理，请先暂停那里');note('第 '+task.row+' 行：只读诊断');const result=await api.diagnose(task,note);status(result.ok?'诊断通过，可试跑首条。':'诊断发现问题，请点击“复制日志”发给我定位。',!result.ok);});
    }finally{busy=false;controls();}
  }));
- $('copylog').addEventListener('click',handler(async()=>{const text='百度网盘转存与换链助手 3.1.1\n'+$('log').textContent;await copyText(text);status('日志已复制，可直接粘贴发送。');}));
+ $('copylog').addEventListener('click',handler(async()=>{const text='百度网盘转存与换链助手 3.4.3\n'+$('log').textContent;await copyText(text);status('日志已复制，可直接粘贴发送。');}));
  $('trial').addEventListener('click',handler(()=>execute(true)));$('run').addEventListener('click',handler(()=>execute(false)));
  $('retry').addEventListener('click',handler(()=>execute(false,true)));
  $('pause').addEventListener('click',()=>{stop=true;status('正在暂停，等待当前请求结束并保存进度…');});
@@ -725,3 +892,156 @@ https://github.com/nodeca/pako/blob/main/LICENSE
  $('fold').addEventListener('click',()=>{const main=root.querySelector('main');main.hidden=!main.hidden;$('fold').textContent=main.hidden?'展开':'收起';});
  window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
 })();
+
+;
+(function(){
+ 'use strict';
+ const root=document.getElementById('pan-excel-assistant')?.shadowRoot,P=globalThis.PanPreview;
+ if(!root||!P)return;
+ const api=new globalThis.PanExcelAPI.BaiduAPI(),box=document.createElement('details');box.id='preview-tool';
+ box.style.cssText='border:1px solid #b5cfe9;border-radius:10px;padding:12px;margin:0 0 14px;background:#f6faff';
+ box.innerHTML=`<summary style="font-weight:700;color:#134e83">网盘已有剧集 · 批量分享前 10 集 · 3.4.3</summary><p class="foot">按集数选取 1–10 集视频；外层没有剧集时向内查找。先扫描核对，再创建分享。365 天有效 · 随机提取码。</p><label>扫描目录 <input id="pv-path" type="text" placeholder="/资源/剧单" /></label><div class="toolbar" style="margin-top:10px"><button id="pv-current">使用当前网盘目录</button><button id="pv-scan">扫描目录（不分享）</button><button id="pv-run" class="primary" disabled>分享选中剧目的前 10 集</button><button id="pv-retry" disabled>重试失败项</button><button id="pv-stop" disabled>暂停</button><button id="pv-export" disabled>导出预览链接 Excel</button></div><div id="pv-status" class="summary" role="status">请选择剧单根目录，然后扫描。此功能直接分享已有视频，不转存、不移动文件。</div><div id="pv-progress" role="status" aria-live="polite" style="padding:8px 0;font-weight:600"></div><div class="tablewrap"><table><thead><tr><th><input id="pv-all" type="checkbox" checked aria-label="选择全部可分享剧目" /></th><th style="width:22%">文件夹</th><th style="width:40%">识别结果 / 实际目录</th><th>状态 / 预览链接</th></tr></thead><tbody id="pv-rows"></tbody></table></div>`;
+ root.querySelector('main').insertBefore(box,root.querySelector('.tabs'));
+ const $=id=>box.querySelector('#pv-'+id);
+ let rows=[],busy=false,stop=false,account='',scannedRoot='',key='',stored={};
+ const message=t=>{$('status').textContent=t;};api.onTrace=message;
+ function pagePath(){const q=location.hash.includes('?')?location.hash.split('?').slice(1).join('?'):location.hash.replace(/^#/,'');return new URLSearchParams(q).get('path')||'/';}
+ $('path').value=pagePath();
+ function fingerprint(r){return JSON.stringify([r.path,r.files.map(f=>[f.id,f.name,f.size,f.md5,f.episode])]);}
+ function candidateFingerprint(r){return JSON.stringify((r.candidates||[]).map(f=>[f.id,f.name,f.size,f.md5]).sort((a,b)=>a[0].localeCompare(b[0])));}
+ function reviewProgress(){const remaining=rows.filter(r=>r.error||(!r.reviewed&&r.warning)).length;return '共 '+rows.length+' 项 · 已手动核对 '+rows.filter(r=>r.reviewed).length+' 项 · 还剩 '+remaining+' 项需核对';}
+ function openReview(r){
+   if(busy||r.state.phase)return;
+   const dialog=document.createElement('dialog');dialog.style.cssText='width:min(800px,85vw);max-height:80vh;border:1px solid #b5cfe9;border-radius:12px;padding:20px';
+   const title=document.createElement('h3');title.textContent='核对文件：'+r.name;
+   const info=document.createElement('p');info.textContent='已完整读取目录。每集只勾选一个版本；所有集数都可以手动修改，以你确认的结果为准。只允许第 1–10 集。';
+   const list=document.createElement('div');list.style.cssText='max-height:50vh;overflow:auto';const entries=[];
+   for(const f of r.candidates){
+     const n=P.episode(f.name);
+     const line=document.createElement('label');line.style.cssText='display:flex;gap:10px;align-items:center;padding:8px;border-bottom:1px solid #ddd';
+     const check=document.createElement('input');check.type='checkbox';check.dataset.id=f.id;check.style.width='auto';
+     const previous=r.files.find(x=>x.id===f.id);check.checked=!!previous&&(r.reviewed||r.files.filter(x=>x.episode===previous.episode).length===1);
+     const name=document.createElement('span');name.textContent=f.name;name.style.flex='1';
+     const ep=document.createElement('input');ep.type='number';ep.min='1';ep.max='10';ep.value=previous?.episode??n??'';ep.style.width='70px';ep.setAttribute('aria-label',f.name+' 的集数');
+     line.append(check,name,ep);list.append(line);entries.push({f,check,ep});
+   }
+   const progress=document.createElement('p');progress.textContent=reviewProgress();
+   const selectionProgress=document.createElement('p');const updateSelection=()=>{selectionProgress.textContent='本剧已勾选 '+entries.filter(e=>e.check.checked).length+' 个文件（最多 10 个）';};for(const e of entries){e.check.onchange=updateSelection;e.ep.oninput=updateSelection;}updateSelection();
+   const error=document.createElement('p');error.className='error';error.setAttribute('role','alert');
+   const confirm=document.createElement('button');confirm.textContent='确认所选文件';confirm.id='pv-review-confirm';
+   confirm.onclick=async()=>{try{
+     const files=P.reviewSelection(r,entries.filter(e=>e.check.checked).map(e=>({id:e.f.id,episode:Number(e.ep.value),manualEpisode:true})));
+     r.files=files;r.error='';r.warning='已手动核对，选中 '+files.length+' 集';r.reviewed=true;r.selected=true;r.state={};await save();dialog.close();message('已核对：'+r.name+'。现在可以勾选并分享。');
+   }catch(e){error.textContent=e.message;}};
+   const cancel=document.createElement('button');cancel.textContent='返回';cancel.onclick=()=>dialog.close();dialog.append(title,info,progress,selectionProgress,list,error,confirm,cancel);root.append(dialog);dialog.addEventListener('close',()=>dialog.remove());dialog.showModal();
+ }
+ function ready(){return rows.length&&$('path').value.trim()===scannedRoot;}
+ function controls(){
+   for(const id of ['path','current','scan','all'])$(id).disabled=busy;
+   $('run').disabled=busy||!ready()||!rows.some(r=>r.selected&&!r.error&&r.state.phase!=='done');
+   $('retry').disabled=busy||!ready()||!rows.some(r=>r.state.error&&!r.error&&r.state.phase!=='done');
+   $('stop').disabled=!busy;$('export').disabled=busy||!rows.length;
+   for(const c of $('rows').querySelectorAll('input,button.review'))c.disabled=busy||c.dataset.invalid==='true';
+ }
+ function render(){
+   $('progress').textContent=rows.length?reviewProgress():'';
+   $('rows').replaceChildren();
+   for(const r of rows){
+     const tr=document.createElement('tr'),check=document.createElement('input');check.type='checkbox';check.checked=r.selected;check.dataset.invalid=String(Boolean(r.error));check.setAttribute('aria-label','选择 '+r.name);check.onchange=()=>{r.selected=check.checked;controls();};
+     const td=document.createElement('td');td.append(check);tr.append(td);
+     for(const text of [r.name,r.path+'\n'+(r.readCount===undefined?'目录未完整读取':'已完整读取 '+r.readCount+' 项')+'\n'+r.files.map(f=>'第 '+f.episode+' 集：'+f.name).join('\n')+(r.warning?'\n'+r.warning:'')]){const cell=document.createElement('td');cell.textContent=text;cell.style.whiteSpace='pre-wrap';tr.append(cell);}
+     const cell=document.createElement('td');cell.style.whiteSpace='pre-wrap';cell.textContent=r.error||r.state.error||({done:'完成',created:'待核验分享',pending:'创建结果待核实'}[r.state.phase]||'待分享');
+     if(r.error||r.state.error)cell.className='error';
+     if(r.state.phase==='done'){const button=document.createElement('button');button.className='copy-link';button.textContent=r.state.link;button.onclick=handler(async()=>{if(typeof GM_setClipboard==='function')GM_setClipboard(r.state.link,'text');else await navigator.clipboard.writeText(r.state.link);message('已复制：'+r.name);});cell.append(button);}
+     if(r.candidates?.length&&!r.state.phase){const review=document.createElement('button');review.className='review';review.textContent='核对 / 选择文件';review.onclick=()=>openReview(r);cell.append(document.createElement('br'),review);}
+     tr.append(cell);$('rows').append(tr);
+   }
+   controls();
+ }
+ async function save(){
+   for(const r of rows){const old=stored[r.path];if(old&&old.fingerprint!==fingerprint(r)&&['pending','created'].includes(old.state?.phase))continue;stored[r.path]={fingerprint:fingerprint(r),state:r.state,reviewed:r.reviewed?{candidates:candidateFingerprint(r),files:r.files}:null};}
+   const value=JSON.stringify({version:1,account,root:scannedRoot,rows:stored});GM_setValue(key,value);
+   if(GM_getValue(key,'')!==value)throw Object.assign(Error('预览进度保存失败，已停止'),{fatal:true});render();
+ }
+ function handler(fn){return()=>Promise.resolve().then(fn).catch(e=>{message(e.message);controls();});}
+ $('current').onclick=()=>{$('path').value=pagePath();controls();};$('path').oninput=controls;
+ $('scan').onclick=handler(async()=>{
+   if(busy)return;busy=true;stop=false;controls();
+   try{
+     const path=P.pathValue($('path').value);$('path').value=path;account=(await api.identity()).uk;
+     rows=[];scannedRoot='';render();
+     const found=await P.scan({root:path,list:p=>api.list(p),stopped:()=>stop,trace:message});
+     scannedRoot=path;key='pan-preview-v1:'+account+':'+path;stored={};
+     const raw=GM_getValue(key,'');if(raw){const data=JSON.parse(raw);if(data.version!==1||data.account!==account||data.root!==path)throw Error('保存的预览进度与当前账号或目录不符');stored=data.rows||{};}
+     rows=found.map(r=>{const old=stored[r.path];if(old?.reviewed?.candidates===candidateFingerprint(r)){try{r.files=P.reviewSelection(r,old.reviewed.files);r.error='';r.warning='已恢复手动核对结果';r.reviewed=true;}catch{}}const state=old?.fingerprint===fingerprint(r)?old.state:{};return {...r,state,selected:!r.error&&state.phase!=='done'};});
+     // Never hide an unresolved write merely because files changed between scans.
+     for(const r of rows){const old=stored[r.path];if(old&&old.fingerprint!==fingerprint(r)&&['pending','created'].includes(old.state?.phase))r.error='该目录上次分享尚未核实，且文件已变化。请先核对我的分享。';}
+     message('扫描完成：'+rows.length+' 项，'+rows.filter(r=>r.error).length+' 项需核对。检查具体文件后，再点击分享。');render();
+   }finally{busy=false;controls();}
+ });
+ async function execute(failedOnly){
+   if(busy||!ready())return;if(!navigator.locks)throw Error('请使用支持任务互斥的新版 Edge / Chrome');
+   const batchOptions=globalThis.PanShareSettings?.read('preview')||{period:365,pwd:''};
+   busy=true;stop=false;controls();
+   try{await navigator.locks.request('pan-excel-transfer',{ifAvailable:true},async lock=>{
+     if(!lock)throw Error('另一个转存或预览任务正在运行，请先暂停');
+     const latest=GM_getValue(key,'');if(latest){const data=JSON.parse(latest);if(data.account!==account||data.root!==scannedRoot||data.version!==1)throw Error('预览进度账号或目录不一致');stored=data.rows||{};for(const r of rows){const old=stored[r.path];if(old?.fingerprint===fingerprint(r))r.state=old.state;else if(old&&['pending','created'].includes(old.state?.phase))r.error='已有未核实的分享，且文件发生变化，请先核对我的分享。';}}
+     for(const row of rows.filter(r=>!r.error&&r.state.phase!=='done'&&(failedOnly?r.state.error:r.selected))){
+       if(stop)break;row.shareOptions=batchOptions;row.state.error='';message('正在生成预览：'+row.name);
+       try{await P.share({row,state:row.state,api,account,save,stopped:()=>stop});}
+       catch(e){row.state.error=e.message;await save();if(e.fatal||e.paused){stop=true;break;}}
+       render();
+     }
+     message((stop?'已暂停':'本轮结束')+'；已完成 '+rows.filter(r=>r.state.phase==='done').length+' 项。可导出两列 Excel。');
+   });}finally{busy=false;render();}
+ }
+ $('run').onclick=handler(()=>execute(false));$('retry').onclick=handler(()=>execute(true));$('stop').onclick=()=>{stop=true;message('正在暂停，等待当前请求完成…');};
+ $('all').onchange=()=>{for(const r of rows)r.selected=!r.error&&$('all').checked;render();};
+ $('export').onclick=handler(async()=>{const bytes=await P.exportExcel(rows,ExcelJS),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),a=document.createElement('a');a.href=url;a.download='前10集预览链接.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});
+ window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
+ controls();
+})();
+
+;
+(function(g,f){const x=f(typeof module==='object'?require('./core.js'):g.PanExcel);if(typeof module==='object')module.exports=x;else g.PanDirectory=x;})(globalThis,function(C){
+ function options(period,pwd){period=Number(period);if(![0,1,7,30,365].includes(period))throw Error('有效期无效');if(pwd&&!/^[a-zA-Z0-9]{4}$/.test(pwd))throw Error('统一提取码须为4位字母或数字');return {period,pwd};}
+ function verify(r,id,period,started){if(!r)throw Error('分享记录暂未返回，请重试核验');if(JSON.stringify((r.fsIds||r.fs_ids||[]).map(String))!==JSON.stringify([String(id)]))throw Error('分享内容不符');if(r.status!==undefined&&Number(r.status)!==0)throw Error('分享状态异常');let n=Number(r.expiredTime??r.expiretime??r.expire_time);if(!Number.isFinite(n))throw Error('无法核验有效期');if(period===0){if(n!==0)throw Error('未按永久有效创建');return;}if(n>1e12)n/=1000;else if(n>0&&n<=365*86400)n+=Date.now()/1000;if(Math.abs(n-started/1000-period*86400)>300)throw Error('实际有效期与设置不一致');}
+ async function share(api,item,state,opt,save){options(opt.period,opt.pwd);if(state.phase==='done')return;if(state.phase==='pending')throw Error('上次请求结果不明，请核对我的分享，不会重复创建');if(!state.phase){state.pwd=opt.pwd||C.randomPwd();state.started=Date.now();state.phase='pending';await save();let r;try{r=await api.createShare([item.id],state.pwd,opt.period);}catch(e){if(e.definite)delete state.phase;await save();throw e;}state.id=String(r.shareid||r.share_id||'');state.raw=r.link||r.shorturl||'';if(!state.id||!state.raw)throw Error('分享响应不完整，请核对我的分享');state.phase='created';await save();}const records=await api.shareRecords(state.id);verify(records.find(r=>String(r.shareId??r.shareid)===state.id),item.id,opt.period,state.started);const u=new URL(state.raw);if(u.hostname!=='pan.baidu.com'||!/^\/s\/1[\w-]+$/.test(u.pathname))throw Error('分享链接格式异常');u.protocol='https:';u.searchParams.set('pwd',state.pwd);state.link=u.href;state.phase='done';state.error='';await save();}
+ async function excel(rows,E){const w=new E.Workbook(),s=w.addWorksheet('目录分享');s.addRow(['名称','分享链接']);s.getColumn(1).width=45;s.getColumn(2).width=85;for(const r of rows)s.addRow([r.name,r.state.phase==='done'?r.state.link:'']);return w.xlsx.writeBuffer();}
+ return {options,verify,share,excel};
+});
+
+;
+(function(){const root=document.getElementById('pan-excel-assistant')?.shadowRoot;if(!root)return;const D=PanDirectory,api=new PanExcelAPI.BaiduAPI(),box=document.createElement('details');box.innerHTML='<summary>当前目录批量分享 · 3.4.3</summary><p>每个文件、每个文件夹各生成一条分享，不拆分子目录。</p><input id="ds-path" type="text" aria-label="分享目录"><button id="ds-current">使用当前目录</button><label>有效期 <select id="ds-period"><option value="1">1天</option><option value="7">7天</option><option value="30">30天</option><option value="365" selected>365天</option><option value="0">永久</option></select></label><label>提取码 <input id="ds-pwd" placeholder="留空：每条随机；或填统一4位码" maxlength="4"></label><div class="toolbar"><button id="ds-scan">读取目录</button><button id="ds-run" disabled>生成分享 / 重试未完成项</button><button id="ds-stop" disabled>暂停</button><button id="ds-export" disabled>导出 Excel</button></div><p id="ds-status" role="status"></p><div style="max-height:300px;overflow:auto" id="ds-rows"></div>';root.querySelector('main').prepend(box);const $=s=>box.querySelector('#ds-'+s);let rows=[],busy=false,stop=false,key='',account='',opt=null,config='';const path=()=>new URLSearchParams(location.hash.split('?')[1]||'').get('path')||'/';$('path').value=path();function signature(){return JSON.stringify([$('path').value,$('period').value,$('pwd').value]);}function render(){const out=$('rows');out.replaceChildren();for(const r of rows){const p=document.createElement('p');p.textContent=(r.dir?'📁 ':'')+r.name+' — '+(r.state.error||(r.state.phase==='done'?r.state.link:'待处理'));out.append(p);}for(const id of ['path','period','pwd','current','scan'])$(id).disabled=busy;$('run').disabled=busy||!rows.length||config!==signature();$('export').disabled=busy||!rows.length;$('stop').disabled=!busy;}
+ function save(){const value=JSON.stringify(Object.fromEntries(rows.map(r=>[r.id,r.state])));GM_setValue(key,value);if(GM_getValue(key)!==value)throw Object.assign(Error('保存进度失败'),{fatal:true});render();}
+ function action(fn){return async()=>{if(busy)return;busy=true;render();try{await fn();}catch(e){$('status').textContent=e.message;}finally{busy=false;render();}};}
+ $('current').onclick=()=>{$('path').value=path();render();};for(const id of ['path','period','pwd'])$(id).oninput=render;
+ $('scan').onclick=action(async()=>{opt=D.options($('period').value,$('pwd').value);const p=PanPreview.pathValue($('path').value);$('path').value=p;account=(await api.identity()).uk;const items=await api.list(p);key='pan-directory-v1:'+JSON.stringify([account,p,opt]);const saved=JSON.parse(GM_getValue(key,'{}'));rows=items.map(r=>({...r,state:saved[r.id]||{}}));config=signature();$('status').textContent='已读取 '+rows.length+' 项，尚未新建分享。设置改变后请重新读取目录。';});
+ $('run').onclick=action(async()=>{if(config!==signature())throw Error('设置已变化，请重新读取目录');stop=false;await navigator.locks.request('pan-excel-transfer',{ifAvailable:true},async lock=>{if(!lock)throw Error('其他任务正在运行');const saved=JSON.parse(GM_getValue(key,'{}'));for(const r of rows)if(saved[r.id])r.state=saved[r.id];for(const r of rows){if(stop)break;if(r.state.phase==='done')continue;try{if((await api.identity()).uk!==account)throw Object.assign(Error('账号变化'),{fatal:true});if(stop)break;$('status').textContent='正在分享：'+r.name;r.state.error='';await D.share(api,r,r.state,opt,save);}catch(e){r.state.error=e.message;save();if(e.fatal){stop=true;break;}}} $('status').textContent=(stop?'已暂停':'本轮结束')+'，已完成 '+rows.filter(r=>r.state.phase==='done').length+'/'+rows.length;});});$('stop').onclick=()=>{stop=true;$('status').textContent='等待当前分享核验完成后暂停';};
+ $('export').onclick=action(async()=>{const data=await D.excel(rows,ExcelJS),url=URL.createObjectURL(new Blob([data],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),a=document.createElement('a');a.href=url;a.download='当前目录分享链接.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);});window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});render();})();
+
+;
+(function(){
+ const root=document.getElementById('pan-excel-assistant')?.shadowRoot;if(!root)return;
+ const main=root.querySelector('main'),directory=root.querySelector('#ds-path')?.closest('details'),preview=root.querySelector('#preview-tool');if(!directory||!preview)return;
+ const transfer=document.createElement('section');for(const child of [...main.children])if(child!==directory&&child!==preview)transfer.append(child);
+ const nav=document.createElement('div');nav.className='mode-nav';nav.setAttribute('role','tablist');nav.setAttribute('aria-label','选择功能');
+ const sections=[['转存换链',transfer],['目录批量分享',directory],['前 10 集预览',preview]];
+ sections.forEach(([name,panel],i)=>{panel.id=panel.id||'mode-panel-'+i;panel.setAttribute('role','tabpanel');panel.classList.add('mode-panel');if(panel.tagName==='DETAILS'){panel.open=true;panel.querySelector('summary').hidden=true;}const button=document.createElement('button');button.type='button';button.id='mode-tab-'+i;button.textContent=name;button.setAttribute('role','tab');button.setAttribute('aria-controls',panel.id);panel.setAttribute('aria-labelledby',button.id);button.onclick=()=>select(i);button.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?2:(i+(e.key==='ArrowRight'?1:2))%3;select(next);nav.children[next].focus();}};nav.append(button);});
+ function select(index){sections.forEach(([,p],i)=>{p.hidden=i!==index;nav.children[i].setAttribute('aria-selected',String(i===index));nav.children[i].tabIndex=i===index?0:-1;});main.scrollTop=0;}
+ main.append(nav,transfer,directory,preview);
+ const heading=document.createElement('h3');heading.textContent='批量生成分享链接';directory.prepend(heading);
+ const path=root.querySelector('#ds-path'),current=root.querySelector('#ds-current'),period=root.querySelector('#ds-period'),pwd=root.querySelector('#ds-pwd');
+ const pathGroup=document.createElement('div');pathGroup.className='directory-path';const label=document.createElement('label');label.textContent='分享目录';label.htmlFor='ds-path';pathGroup.append(label,path,current);
+ const settings=document.createElement('div');settings.className='directory-settings';settings.append(period.closest('label'),pwd.closest('label'));pwd.type='text';pwd.placeholder='留空则逐条随机生成';
+ const help=document.createElement('small');help.textContent='统一提取码请填写 4 位字母或数字。';pwd.parentElement.append(help);
+ const toolbar=directory.querySelector('.toolbar');directory.insertBefore(pathGroup,toolbar);directory.prepend(settings);root.querySelector('#ds-run').classList.add('primary');root.querySelector('#ds-status').classList.add('summary');root.querySelector('#ds-status').textContent='先读取目录，确认清单后再生成分享。';
+ const style=document.createElement('style');style.textContent=`
+ .panel{width:min(1060px,calc(100vw - 32px))} main{padding:16px!important}.mode-nav{display:flex;gap:6px;background:#edf2f8;padding:5px;border-radius:10px;margin-bottom:20px;position:sticky;top:-16px;z-index:5}.mode-nav button{flex:1;background:transparent;border:0;padding:12px 8px;color:#64748b;font-weight:600;border-radius:7px}.mode-nav button[aria-selected=true]{background:#fff;color:#145b98;box-shadow:0 1px 5px #18324c18}.mode-panel{margin:0!important;min-width:0}.mode-panel>summary{display:none}.mode-panel h3{font-size:19px;margin:0 0 8px;color:#173754}.mode-panel>p{line-height:1.7;margin:0 0 16px}.directory-path{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin:18px 0 16px}.directory-path>label{grid-column:1/-1;font-weight:600}.directory-settings{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:16px;background:#f5f8fc;border:1px solid #e2eaf4;border-radius:10px;margin-bottom:16px}.directory-settings>label{display:flex;flex-direction:column;gap:8px;font-weight:600}.directory-settings select,.directory-settings input{height:42px;padding:8px 12px;font:inherit;border:1px solid #ccd7e5;border-radius:7px;background:white;box-sizing:border-box;width:100%}.directory-settings small{font-weight:400;color:#68778b}.mode-panel .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.mode-panel #ds-rows{border:1px solid #e0e7ef;border-radius:8px;max-height:360px!important}.mode-panel #ds-rows:empty{display:none}.mode-panel #ds-rows>p{padding:12px 14px;margin:0;border-bottom:1px solid #e0e7ef;line-height:1.7;overflow-wrap:anywhere}.mode-panel #ds-rows>p:nth-child(even){background:#f8fafc}#ds-status:empty{display:none}@media(max-width:650px){.directory-settings{grid-template-columns:1fr}.mode-nav button{font-size:12px}.directory-path{grid-template-columns:1fr}.mode-nav{top:-16px}}
+ `;root.append(style);select(1);
+})();
+
+;
+(function(){const root=document.getElementById('pan-excel-assistant')?.shadowRoot;if(!root)return;const fields={};for(const [name,panel] of [['transfer',root.querySelector('#mode-panel-0')],['preview',root.querySelector('#preview-tool')]]){if(!panel)continue;const box=document.createElement('div');box.className='directory-settings';box.innerHTML='<label>有效期<select><option value="1">1天</option><option value="7">7天</option><option value="30">30天</option><option value="365" selected>365天</option><option value="0">永久</option></select></label><label>提取码<input type="text" maxlength="4" placeholder="留空则逐条随机生成"><small>统一提取码填4位字母或数字。设置用于新任务，重试沿用原设置。</small></label>';panel.prepend(box);fields[name]=box;}
+ globalThis.PanShareSettings={read(name){const box=fields[name];return PanDirectory.options(box.querySelector('select').value,box.querySelector('input').value);}};
+ const intro=root.querySelector('.intro');if(intro)intro.textContent='按行创建目录、转存并生成新链接。有效期和提取码按本模块设置。';const foot=root.querySelector('#preview-tool > p.foot');if(foot)foot.textContent='按集数选取第1–10集，外层没有剧集时向内查找。先扫描核对，再按本模块设置生成分享。';})();

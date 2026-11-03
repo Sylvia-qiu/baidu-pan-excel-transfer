@@ -9,7 +9,7 @@ const header=`// ==UserScript==
 // @supportURL   https://github.com/Sylvia-qiu/baidu-pan-excel-transfer/issues
 // @downloadURL  https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js
 // @updateURL    https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js
-// @description  Excel逐行建目录、转存、生成365天分享并导出独立转存链接列；保存进度，验证分享内容。
+// @description  Excel转存换链；已有剧集按集数批量分享前10集，支持嵌套目录、365天有效期和Excel导出。
 // @match        https://pan.baidu.com/disk/*
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -21,7 +21,7 @@ const header=`// ==UserScript==
 // Derived workflow: aitippro/baidu-pan-batch-transfer (MIT).
 // Bundles ExcelJS 4.4.0 (MIT); see accompanying license files.
 `;
-const files=['vendor/exceljs.min.js','core.js','api.js','app.js'];
+const files=['vendor/exceljs.min.js','core.js','api.js','preview.js','pipeline.js','app.js','preview-ui.js','directory.js','directory-ui.js','layout.js','share-settings.js'];
 const licenses=['LICENSE','LICENSE-upstream.txt','LICENSE-exceljs.txt'].map(f=>'/* '+f+'\n'+fs.readFileSync(path.join(__dirname,f),'utf8')+'\n*/').join('\n');
 const output=header+'\n'+licenses+'\n'+files.map(f=>fs.readFileSync(path.join(__dirname,f),'utf8').replaceAll('__PAN_VERSION__',version).replace(/\r\n/g,'\n')).join('\n;\n');
 fs.writeFileSync(path.join(__dirname,'baidu-pan-excel-transfer.user.js'),output.replace(/\r\n/g,'\n')); 
