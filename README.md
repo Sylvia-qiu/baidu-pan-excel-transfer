@@ -6,6 +6,15 @@
 
 [安装油猴脚本](https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js) · [下载 Excel 模板](examples/import-template.xlsx) · [查看操作手册](docs/USER_GUIDE.md) · [反馈问题 / 功能建议](https://github.com/Sylvia-qiu/baidu-pan-excel-transfer/issues)
 
+## 最近更新 · v3.4.3
+
+- **前 10 集样片预览**：按集数选取每部剧的第 1–10 集，用于提取样片供试看；支持嵌套目录、手动核对集数，并导出“文件夹 / 分享链接”Excel。
+- **当前目录批量分享**：每个文件、每个文件夹各生成一条分享链接，支持导出 Excel。
+- **分享设置可配置**：三个模块都支持选择有效期、设置提取码，设置区域统一放在顶部。
+- **界面与核对优化**：三个功能改为页签切换；核对时可修改集数，并查看还剩多少项待核对。
+
+[查看完整迭代记录 →](CHANGELOG.md)
+
 ## 为什么做这个项目
 
 起因很简单：我被“新建文件夹”这件事折腾烦了 😂
