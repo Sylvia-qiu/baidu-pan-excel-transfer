@@ -1,8 +1,8 @@
 # 百度网盘批量转存与换链助手｜Excel 导入 · 油猴脚本
 
-支持 **Excel 批量转存、文本链接导入、自动创建文件夹、批量生成自己的百度网盘分享链接**。每行可指定不同目标目录，转存后核验内容，生成 365 天有效期、随机提取码的新链接，再导出 Excel。
+支持 **Excel / 文本批量转存换链、当前目录批量分享、前 10 集样片提取**。转存时按每行路径自动创建文件夹；也可为网盘内每个文件或文件夹分别生成链接，或从嵌套目录中按集数选取第 1–10 集供试看。三个模块均支持配置分享有效期和提取码，并导出 Excel。
 
-**Baidu Netdisk Batch Transfer & Share Link Generator** — a Tampermonkey userscript with Excel import/export, per-row destination folders, automatic folder creation, and verified 365-day share links.
+**Baidu Netdisk Batch Transfer & Share Link Generator** — a Tampermonkey userscript for Excel/text batch transfers with automatic folder creation, per-item directory sharing, and episode 1–10 preview sharing from nested folders. All three modules support configurable link expiry, extraction codes, and Excel export.
 
 [安装油猴脚本](https://raw.githubusercontent.com/Sylvia-qiu/baidu-pan-excel-transfer/main/baidu-pan-excel-transfer.user.js) · [下载 Excel 模板](examples/import-template.xlsx) · [查看操作手册](docs/USER_GUIDE.md) · [反馈问题 / 功能建议](https://github.com/Sylvia-qiu/baidu-pan-excel-transfer/issues)
 
