@@ -9,11 +9,11 @@ http.createServer(async(req,res)=>{try{
  if(['/core.js','/api.js','/app.js','/vendor/exceljs.min.js'].includes(p)){res.setHeader('Content-Type','text/javascript');return res.end(fs.readFileSync(path.join(__dirname,p)));}
  if(p==='/fixture.xlsx'){const w=new E.Workbook();const s=w.addWorksheet('导入模板');s.addRow(['序号','原始链接','转存路径','备注']);s.addRow([1,'通过网盘分享的文件：01.mp4\n链接：https://pan.baidu.com/s/1fixture 提取码：abcd','/测试/新目录/剧名','测试备注']);res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');return res.end(Buffer.from(await w.xlsx.writeBuffer()));}
  if(p==='/api/gettemplatevariable')return json({errno:0,result:{bdstoken:'fixture-token',uk:12345}});
- if(p==='/api/list'){const list=dirs.get(url.searchParams.get('dir'));return json(list?{errno:0,list}:{errno:-9});}
+ if(p==='/api/list'){const list=dirs.get(url.searchParams.get('dir'));return json(list?{errno:0,list:Number(url.searchParams.get('page')||1)>1?[]:list}:{errno:-9});}
  if(p==='/api/create'){dirs.set(form.get('path'),[]);mutations.push({type:'mkdir',path:form.get('path')});return json({errno:0});}
  if(p==='/share/verify')return json({errno:0,randsk:'fixture%2B%2F%3D'});
  if(p==='/s/1fixture'){res.setHeader('Content-Type','text/html');return res.end('<script>locals.mset('+JSON.stringify({shareid:100,share_uk:200,errno:0,errortype:-1,...(process.env.PAN_TEST_SEKEY?{}:{file_list:[source]})})+');</script>');}
- if(p==='/share/list')return json(process.env.PAN_TEST_SEKEY&&url.searchParams.get('sekey')==='fixture+/='&&url.searchParams.get('is_from_web')==='true'?{errno:0,list:[source]}:{errno:-9});
+ if(p==='/share/list')return json(process.env.PAN_TEST_SEKEY&&url.searchParams.get('sekey')==='fixture+/='&&url.searchParams.get('is_from_web')==='true'?{errno:0,list:Number(url.searchParams.get('page')||1)>1?[]:[source]}:{errno:-9});
  if(p==='/share/transfer'&&process.env.PAN_TEST_SEKEY&&url.searchParams.get('sekey')!=='fixture+/=')return json({errno:-9});
  if(p==='/share/transfer'){const dest=form.get('path');dirs.get(dest).push({...source,fs_id:99,path:dest+'/01.mp4'});mutations.push({type:'transfer',path:dest,ids:JSON.parse(form.get('fsidlist'))});return json({errno:0,extra:{list:[{from:'/source/01.mp4',to:dest+'/01.mp4',from_fs_id:11,to_fs_id:99}]}});}
  if(p==='/share/set'){const ids=JSON.parse(form.get('fid_list'));mutations.push({type:'share',ids,period:form.get('period')});record={shareId:999,fsIds:ids,expiredTime:Math.floor(Date.now()/1000)+365*86400,status:0};return json({errno:0,shareid:999,link:'https://pan.baidu.com/s/1LOCALTEST'});}
